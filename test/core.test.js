@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { SessionRuntime } from '../src/core/session-runtime.js'
 
 // I want the event log to round-trip into messages, and I don't want to drop reasoning_content.
-test('Session 使用事件日志派生工具调用历史，并保留 reasoning_content', () => {
+test('Session derives tool-call history from the event log and keeps reasoning_content', () => {
   const sessions = new SessionRuntime()
   const s = sessions.create()
 

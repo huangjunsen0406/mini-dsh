@@ -54,6 +54,10 @@ export class SessionRuntime {
         this.append(id, "session/start", { meta: old.meta, reset: true });
     }
 
+    list() {
+        return [...this.#sessions.values()]
+    }
+
     /**
      * I fold the event log into OpenAI-style chat messages.
      * I skip types I don't care about, like session/start.
