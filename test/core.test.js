@@ -2,6 +2,8 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { SessionRuntime } from '../src/core/session-runtime.js'
 import { ToolRuntime } from '../src/core/tool-runtime.js'
+import { SystemPromptRuntime } from '../src/core/system-prompt-runtime.js'
+import { LlmRuntime } from '../src/core/llm-runtime.js'
 
 test('Session derives tool-call history from the event log and keeps reasoning_content', () => {
   const sessions = new SessionRuntime()
@@ -35,7 +37,40 @@ test('ToolRuntime register returns a disposer and renders results as text', asyn
   assert.equal(tools.schemas().length, 1)
   const result = await tools.execute('echo', { a: 1 })
   assert.match(tools.renderResult(result), /"a": 1/)
-  
+
   dispose()
   assert.equal(tools.schemas().length, 0)
+})
+
+test('SystemPrompt assembles by order and disposer unregisters fragments', async () => {
+  const prompt = new SystemPromptRuntime()
+  prompt.section({ name: 'b', order: 20, text: 'B' })
+  const dispose = prompt.context({ name: 'a', order: 10, text: () => 'A' })
+
+  assert.equal(await prompt.assemble(), 'A\n\nB')
+  dispose()
+  assert.equal(await prompt.assemble(), 'B')
+})
+
+test('LlmRuntime routes chat to the selected provider and disposer unregisters it', async () => {
+  const llm = new LlmRuntime()
+  const calls = []
+  const dispose = llm.register('mock', {
+    models: ['fast'],
+    chat: async request => {
+      calls.push(request)
+      return { content: 'ok' }
+    },
+  })
+
+  assert.equal(llm.defaultSelection(), 'mock/fast')
+  assert.deepEqual(llm.models(), ['mock/fast'])
+  assert.equal(llm.has('mock/fast'), true)
+
+  const reply = await llm.chat({ messages: [] })
+  assert.equal(reply.content, 'ok')
+  assert.equal(calls[0].model, 'fast')
+
+  dispose()
+  assert.deepEqual(llm.models(), [])
 })
