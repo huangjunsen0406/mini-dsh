@@ -1,11 +1,11 @@
 import { randomUUID } from "node:crypto";
 
 /**
- * I keep sessions in memory.
+ * In-memory session store.
  *
- * I don't store chat messages. I append events, then derive the history
- * when I need to talk to the model — that way tool calls, results, and
- * reasoning_content all live in one log.
+ * Stores event logs rather than static chat messages, deriving chat history
+ * on demand when communicating with the model so tool calls, results, and
+ * reasoning_content live in a unified log.
  */
 export class SessionRuntime {
     #sessions = new Map();
@@ -21,7 +21,7 @@ export class SessionRuntime {
         };
 
         this.#sessions.set(id, session);
-        // I always start the log with a session/start event.
+        // Initialize log with a session/start event.
         this.append(id, "session/start", { meta });
         return session;
     }
@@ -59,8 +59,8 @@ export class SessionRuntime {
     }
 
     /**
-     * I fold the event log into OpenAI-style chat messages.
-     * I skip types I don't care about, like session/start.
+     * Folds the event log into OpenAI-style chat messages.
+     * Skips non-message event types such as session/start.
      */
     deriveMessages(id) {
         const events = this.get(id).events;
@@ -87,7 +87,7 @@ export class SessionRuntime {
                 messages.push({
                     role: "assistant",
                     content: data.content ?? null,
-                    // I only attach reasoning_content when the model actually thought.
+                    // Attach reasoning_content only when present.
                     ...(data.reasoningContent
                         ? { reasoning_content: data.reasoningContent }
                         : {}),
@@ -96,7 +96,7 @@ export class SessionRuntime {
                         type: "function",
                         function: {
                             name: call.name,
-                            // Chat Completions wants arguments as a JSON string, so I stringify them.
+                            // Chat Completions expects arguments as a JSON string.
                             arguments: JSON.stringify(call.arguments ?? {}),
                         },
                     })),

@@ -2,8 +2,8 @@ import { Service } from "@deepseek-ai/cordis";
 import { SessionRuntime } from "../core/session-runtime.js";
 
 /**
- * I wrap SessionRuntime as a cordis Service so other plugins can
- * reach it as ctx.sessions, instead of each constructing their own.
+ * Wraps SessionRuntime as a Cordis Service so other plugins can
+ * access it via ctx.sessions instead of constructing individual instances.
  */
 class SessionsService extends Service {
     constructor(ctx) {
@@ -33,6 +33,5 @@ class SessionsService extends Service {
 
 export const name = "mini-sessions";
 export function apply(ctx) {
-    // I register the service here; after this, ctx.sessions is available.
     ctx.plugin(SessionsService);
 }
