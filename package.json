@@ -1,0 +1,23 @@
+{
+  "name": "mini-dsh",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "A minimal handwritten runtime following DSH concepts",
+  "engines": {
+    "node": ">=20.18.1"
+  },
+  "packageManager": "pnpm@11.22.0",
+  "scripts": {
+    "start": "node src/index.js"
+  },
+  "keywords": [
+    "dsh"
+  ],
+  "author": "junsen",
+  "license": "ISC",
+  "dependencies": {
+    "@deepseek-ai/cordis": "^4.0.1",
+    "dotenv": "^17.4.2"
+  }
+}
