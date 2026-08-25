@@ -1,7 +1,6 @@
-// Import Context from cordis
+// I spin up a cordis Context and load a hello plugin — smallest host I can write.
 import { Context } from '@deepseek-ai/cordis'
 
-// Create a Context instance
 const ctx = new Context()
 await ctx.plugin({
     name: 'hello',

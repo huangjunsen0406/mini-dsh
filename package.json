@@ -9,7 +9,8 @@
   },
   "packageManager": "pnpm@11.22.0",
   "scripts": {
-    "start": "node src/index.js"
+    "start": "node src/index.js",
+    "test": "node --test test/*.test.js"
   },
   "keywords": [
     "dsh"
