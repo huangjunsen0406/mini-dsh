@@ -10,7 +10,8 @@
   "packageManager": "pnpm@11.22.0",
   "scripts": {
     "start": "node src/index.js",
-    "test": "node --test test/*.test.js"
+    "test": "node --test test/*.test.js",
+    "check": "node scripts/check-syntax.js"
   },
   "keywords": [
     "dsh"
