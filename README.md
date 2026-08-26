@@ -16,6 +16,10 @@ It deliberately keeps five things:
 
 It also keeps the Bash/File tools and the official `@deepseek-ai/dsh-mcp-client` + Context7, to prove "Everything is a Plugin". Context7 is optional: the CLI still starts when it is unreachable — you just don't get those MCP tools.
 
+## Demo
+
+![mini-dsh CLI](./images/demo.png)
+
 ## Environment
 
 - Node.js `>= 20.18.1`

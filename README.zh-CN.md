@@ -16,6 +16,10 @@
 
 另外保留了 Bash/File 工具和官方 `@deepseek-ai/dsh-mcp-client` + Context7，用来验证“Everything is a Plugin”。Context7 是可选的：连不上时 CLI 照样启动，只是没有那些 MCP 工具。
 
+## 演示
+
+![mini-dsh CLI](./images/demo.png)
+
 ## 环境
 
 - Node.js `>= 20.18.1`
