@@ -253,3 +253,86 @@ test('Agent loop streams reasoning, content, tool-call, and tool-result chunks',
   assert.equal(toolResults.length, 1)
   assert.match(toolResults[0].renderedContent, /result for foo/)
 })
+
+test('streamed tool_calls concatenate name once, not read_fileread_file', async () => {
+  const { accumulateToolCallDelta } = await import('../src/models/deepseek.js')
+  const map = new Map()
+
+  accumulateToolCallDelta(map, {
+    index: 0,
+    id: 'call_1',
+    function: { name: 'read_file', arguments: '' },
+  })
+  accumulateToolCallDelta(map, {
+    index: 0,
+    function: { arguments: '{"path":"README.md"}' },
+  })
+
+  assert.equal(map.get(0).name, 'read_file')
+  assert.equal(map.get(0).id, 'call_1')
+  assert.equal(map.get(0).arguments, '{"path":"README.md"}')
+
+  const streamed = new Map()
+  accumulateToolCallDelta(streamed, { index: 0, function: { name: 'ba' } })
+  accumulateToolCallDelta(streamed, { index: 0, function: { name: 'sh' } })
+  assert.equal(streamed.get(0).name, 'bash')
+})
+
+test('parseSSE flushes a last line without a trailing newline and recognizes data:[DONE]', async () => {
+  const { parseSSE } = await import('../src/models/deepseek.js')
+  const encoder = new TextEncoder()
+  const chunks = [
+    'data: {"choices":[{"delta":{"content":"Hel"}}]}\n',
+    'data: {"choices":[{"delta":{"content":"lo"}}]}',
+  ]
+  let i = 0
+  const response = {
+    body: {
+      getReader() {
+        return {
+          async read() {
+            if (i >= chunks.length) return { done: true, value: undefined }
+            return { done: false, value: encoder.encode(chunks[i++]) }
+          },
+          releaseLock() { },
+        }
+      },
+    },
+  }
+
+  const events = []
+  for await (const event of parseSSE(response)) events.push(event)
+  assert.equal(events.length, 2)
+  assert.equal(events[0].choices[0].delta.content, 'Hel')
+  assert.equal(events[1].choices[0].delta.content, 'lo')
+})
+
+test('finalizeToolCalls sorts by index, drops empty names, and throws on invalid JSON', async () => {
+  const {
+    accumulateToolCallDelta,
+    finalizeToolCalls,
+    parseToolArguments,
+  } = await import('../src/models/deepseek.js')
+
+  const map = new Map()
+  accumulateToolCallDelta(map, {
+    index: 1,
+    id: 'b',
+    function: { name: 'grep', arguments: '{"q":"x"}' },
+  })
+  accumulateToolCallDelta(map, {
+    index: 0,
+    id: 'a',
+    function: { name: 'read_file', arguments: '{"path":"a"}' },
+  })
+  accumulateToolCallDelta(map, { index: 2, function: { arguments: '{' } })
+
+  const calls = finalizeToolCalls(map)
+  assert.equal(calls.length, 2)
+  assert.equal(calls[0].name, 'read_file')
+  assert.equal(calls[1].name, 'grep')
+  assert.deepEqual(calls[0].arguments, { path: 'a' })
+
+  assert.deepEqual(parseToolArguments(''), {})
+  assert.throws(() => parseToolArguments('{"path":'), /incomplete tool arguments JSON/)
+})
