@@ -9,10 +9,13 @@ import * as agents from './plugins/agents.js'
 import * as agentLoop from './plugins/agent-loop.js'
 import * as runtimeContext from './plugins/runtime-context.js'
 import * as deepseek from './models/deepseek.js'
+import * as externalPlugins from './plugins/external-plugins.js'
 import * as cli from './plugins/cli.js'
 
-// Load .env before plugins that read environment variables.
+// Load .env before plugins and plugin config that read environment variables.
 dotenv.config()
+
+const { default: externalConfig } = await import('../plugins.config.js')
 
 const root = new Context()
 const workspace = process.env.MINI_DSH_WORKSPACE ?? process.cwd()
@@ -26,6 +29,7 @@ await root.plugin(agentLoop)
 
 await root.plugin(runtimeContext, { workspace })
 await root.plugin(deepseek)
+await root.plugin(externalPlugins, { entries: externalConfig })
 await root.plugin(cli, {
   model: process.env.MINI_DSH_MODEL ?? 'deepseek/deepseek-v4-pro',
 })

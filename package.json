@@ -19,6 +19,7 @@
   "license": "ISC",
   "dependencies": {
     "@deepseek-ai/cordis": "^4.0.1",
+    "@deepseek-ai/dsh-mcp-client": "0.1.1-rc.2",
     "dotenv": "^17.4.2"
   }
 }
