@@ -74,3 +74,23 @@ test('LlmRuntime routes chat to the selected provider and disposer unregisters i
   dispose()
   assert.deepEqual(llm.models(), [])
 })
+
+test('LlmRuntime selects an upstream model with provider/model', async () => {
+  const llm = new LlmRuntime()
+  let receivedModel = null
+
+  llm.register('mock', {
+    models: ['a', 'b'],
+    async chat({ model }) {
+      receivedModel = model
+      return { content: model, toolCalls: [] }
+    },
+  }, { defaultModel: 'a' })
+
+  assert.deepEqual(llm.models(), ['mock/a', 'mock/b'])
+  assert.equal(llm.has('mock/b'), true)
+
+  const result = await llm.chat({}, 'mock/b')
+  assert.equal(result.content, 'b')
+  assert.equal(receivedModel, 'b')
+})
