@@ -46,9 +46,25 @@ export function apply(ctx, config = {}) {
         )
         console.log(`model: ${agent.model}`)
         console.log(`sandbox workspace: ${ctx.sandbox.workspace}`)
-        console.log('Writes and bash execution ask [Y/n] first.\n')
+        console.log('Writes and bash execution ask [Y/n] first. Press Esc to cancel a run.\n')
 
-        const disposeApprover = ctx.sandbox.setApprover(request => askApproval(rl, request))
+        let abort = null
+        const onStdinData = chunk => {
+            if (!running || !abort || abort.signal.aborted) return
+            // Esc is 0x1b. Arrow keys also start with Esc — ignore those sequences.
+            const bytes = Buffer.from(chunk)
+            if (bytes.length === 1 && bytes[0] === 0x1b) abort.abort()
+        }
+        process.stdin.on('data', onStdinData)
+
+        const disposeApprover = ctx.sandbox.setApprover(request => {
+            // Pause Esc handling so the Y/n prompt stays in cooked readline mode.
+            const wasRunning = running
+            running = false
+            return askApproval(rl, request).finally(() => {
+                running = wasRunning
+            })
+        })
 
         const ask = () => {
             if (!running) rl.question('User > ', handle)
@@ -126,11 +142,13 @@ export function apply(ctx, config = {}) {
             }
 
             running = true
+            abort = new AbortController()
             let inThinking = false
             let inContent = false
 
             try {
                 await agent.send(text, {
+                    signal: abort.signal,
                     onReasoning(chunk) {
                         if (!inThinking) {
                             inThinking = true
@@ -173,9 +191,14 @@ export function apply(ctx, config = {}) {
                 if (inThinking || inContent) {
                     process.stdout.write('\n')
                 }
-                console.error(`\n[AgentError] ${error?.message ?? error}\n`)
+                if (abort.signal.aborted) {
+                    console.error('\n[cancelled]\n')
+                } else {
+                    console.error(`\n[AgentError] ${error?.message ?? error}\n`)
+                }
             } finally {
                 running = false
+                abort = null
                 ask()
             }
         }
@@ -186,6 +209,8 @@ export function apply(ctx, config = {}) {
 
         ask()
         return () => {
+            process.stdin.off('data', onStdinData)
+            abort?.abort()
             disposeApprover()
             rl.close()
         }
