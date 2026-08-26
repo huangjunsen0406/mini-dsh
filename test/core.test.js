@@ -484,3 +484,19 @@ test('allowHosts uses the provided whitelist and does not hardcode localhost', a
   assert.equal(locked.inspectCommand('curl http://127.0.0.1/').action, 'deny')
   assert.equal(locked.inspectCommand('curl http://[::1]/').action, 'deny')
 })
+
+test('glob matches both substrings and * / ** wildcards', async () => {
+  const { matchFilePattern } = await import('../src/tools/files.js')
+
+  assert.equal(matchFilePattern('src/tools/bash.js', '.js'), true)
+  assert.equal(matchFilePattern('src/tools/bash.js', 'src/'), true)
+  assert.equal(matchFilePattern('src/tools/bash.js', 'src/tools/*'), true)
+  assert.equal(matchFilePattern('src/plugins/cli.js', 'src/tools/*'), false)
+  assert.equal(matchFilePattern('src/tools/nested/a.js', 'src/tools/*'), false)
+  assert.equal(matchFilePattern('src/index.js', 'src/**'), true)
+  assert.equal(matchFilePattern('src/tools/bash.js', 'src/**'), true)
+  assert.equal(matchFilePattern('README.md', '*.md'), true)
+  assert.equal(matchFilePattern('docs/guide.md', '*.md'), true)
+  assert.equal(matchFilePattern('src/tools/bash.js', '**/*.js'), true)
+  assert.equal(matchFilePattern('README.md', '**/*.js'), false)
+})

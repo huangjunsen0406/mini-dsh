@@ -8,7 +8,10 @@ import * as llm from './plugins/llm.js'
 import * as agents from './plugins/agents.js'
 import * as agentLoop from './plugins/agent-loop.js'
 import * as runtimeContext from './plugins/runtime-context.js'
+import * as sandbox from './plugins/sandbox.js'
 import * as deepseek from './models/deepseek.js'
+import * as bash from './tools/bash.js'
+import * as files from './tools/files.js'
 import * as externalPlugins from './plugins/external-plugins.js'
 import * as cli from './plugins/cli.js'
 
@@ -28,7 +31,11 @@ await root.plugin(agents)
 await root.plugin(agentLoop)
 
 await root.plugin(runtimeContext, { workspace })
+await root.plugin(sandbox, { workspace })
 await root.plugin(deepseek)
+await root.plugin(bash, { workspace })
+await root.plugin(files, { workspace })
+
 await root.plugin(externalPlugins, { entries: externalConfig })
 await root.plugin(cli, {
   model: process.env.MINI_DSH_MODEL ?? 'deepseek/deepseek-v4-pro',
