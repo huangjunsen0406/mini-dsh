@@ -27,6 +27,21 @@ test('Session derives tool-call history from the event log and keeps reasoning_c
   assert.equal(messages[2].role, 'tool')
 })
 
+test('Session clear keeps the same id and drops derived chat history', () => {
+  const sessions = new SessionRuntime()
+  const s = sessions.create()
+  const id = s.id
+
+  sessions.append(id, 'user/message', { content: 'hello' })
+  sessions.append(id, 'assistant/message', { content: 'hi' })
+  sessions.clear(id)
+
+  assert.equal(sessions.get(id).id, id)
+  assert.equal(sessions.get(id).events[0].type, 'session/start')
+  assert.equal(sessions.get(id).events[0].data.reset, true)
+  assert.deepEqual(sessions.deriveMessages(id), [])
+})
+
 test('ToolRuntime register returns a disposer and renders results as text', async () => {
   const tools = new ToolRuntime()
   const dispose = tools.register({
