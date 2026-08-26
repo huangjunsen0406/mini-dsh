@@ -7,12 +7,14 @@ export const inject = [
     'agentLoop',
     'tools',
     'systemPrompt',
-    'llm'
+    'llm',
+    'sandbox',
 ]
 
 /**
  * Thinnest UI layer. Session, tools, LLM, and the agent loop
- * do not belong here.
+ * do not belong here. The CLI only owns the prompt, slash commands,
+ * and the sandbox approval callback.
  */
 export function apply(ctx, config = {}) {
     const session = ctx.sessions.create({ source: 'cli' })
@@ -42,7 +44,11 @@ export function apply(ctx, config = {}) {
         console.log(
             'commands: /tools /history /prompt /models /model [provider/model] /reset /exit\n',
         )
-        console.log(`model: ${agent.model}\n`)
+        console.log(`model: ${agent.model}`)
+        console.log(`sandbox workspace: ${ctx.sandbox.workspace}`)
+        console.log('Writes and bash execution ask [Y/n] first.\n')
+
+        const disposeApprover = ctx.sandbox.setApprover(request => askApproval(rl, request))
 
         const ask = () => {
             if (!running) rl.question('User > ', handle)
@@ -180,7 +186,21 @@ export function apply(ctx, config = {}) {
 
         ask()
         return () => {
+            disposeApprover()
             rl.close()
         }
     }, 'interactive cli')
+}
+
+function askApproval(rl, request) {
+    return new Promise(resolve => {
+        const summary = request.summary ?? request.tool ?? 'this operation'
+        process.stdout.write(`\n\x1b[33m[Approval]\x1b[0m ${summary}\n`)
+        rl.question('Allow this? [Y/n] ', answer => {
+            const text = String(answer ?? '').trim().toLowerCase()
+            const approved = text === '' || text === 'y' || text === 'yes'
+            if (!approved) process.stdout.write('\x1b[31mrejected.\x1b[0m\n')
+            resolve(approved)
+        })
+    })
 }
