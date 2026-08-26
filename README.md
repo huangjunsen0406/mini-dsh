@@ -14,7 +14,9 @@ It deliberately keeps five things:
 4. LLM Provider Adapter
 5. Agent Loop -> model -> tool -> model -> answer
 
-It also keeps the Bash/File tools and the official `@deepseek-ai/dsh-mcp-client` + Context7, to prove "Everything is a Plugin". Context7 is optional: the CLI still starts when it is unreachable — you just don't get those MCP tools.
+It also keeps the Bash/File tools, a local skill catalog, and the official `@deepseek-ai/dsh-mcp-client` + Context7, to prove "Everything is a Plugin". Context7 is optional: the CLI still starts when it is unreachable — you just don't get those MCP tools.
+
+Skills follow the official contract in miniature: scan `.dsh/skills` and `.agents/skills`, put **name + description** in the system prompt, and load the body only when the model calls `skill({ name })`. The Agent Loop does not change.
 
 ## Demo
 
@@ -34,7 +36,7 @@ cp .env.example .env
 pnpm start
 ```
 
-`.env.example` sets `deepseek/deepseek-v4-flash`. If `MINI_DSH_MODEL` is absent entirely (e.g. you didn't copy `.env`), the entry falls back to `deepseek/deepseek-v4-pro` (`src/index.js:41`).
+`.env.example` sets `deepseek/deepseek-v4-flash`. If `MINI_DSH_MODEL` is absent entirely (e.g. you didn't copy `.env`), the entry falls back to `deepseek/deepseek-v4-pro` (`src/index.js:47`).
 
 Optional: fill in `CONTEXT7_API_KEY`. When `mcp.context7.com` is unreachable you only see `[plugin] failed` — the process does not die.
 
@@ -52,6 +54,7 @@ The path once Context7 is connected:
 
 ```text
 /tools
+/skills
 /models
 /model
 /model deepseek/deepseek-v4-pro
@@ -61,6 +64,8 @@ The path once Context7 is connected:
 /reset
 /exit
 ```
+
+Drop a bundle at `.dsh/skills/<name>/SKILL.md` (kebab-case `name` + `description` frontmatter). `/skills` lists what was discovered; `/prompt` shows the catalog fragment.
 
 Writes and bash execution ask `[Y/n]` first. Press **Esc** while the agent is running to cancel the current run (arrow keys won't cancel it).
 
@@ -141,6 +146,12 @@ src/tools/files.js
 src/plugins/external-plugins.js
 plugins.config.js
   ↓
+src/core/skill-runtime.js
+src/core/skill-filesystem.js
+src/plugins/skills.js
+src/plugins/skill-filesystem.js
+src/tools/skill.js
+  ↓
 test/core.test.js   ← behavior docs: one example per runtime
 ```
 
@@ -154,9 +165,10 @@ test/core.test.js   ← behavior docs: one example per runtime
     sessions     systemPrompt tools        llm          agents       agentLoop
                               │            │                         Agent
                               bash / files DeepSeek
+                              skill
                               │
-                              ctx.sandbox
-                              path / command / Y/n
+                              ctx.sandbox          ctx.skills
+                              path / command / Y/n   .dsh/skills
                               └── dsh-mcp-client (optional)
                                            │
                                         Context7
@@ -173,6 +185,6 @@ pnpm test
 pnpm check
 ```
 
-The tests include a case where an agent finishes only after 20 straight tool calls — proof that the Loop no longer has the old 12-step cap.
+The tests include a case where an agent finishes only after 20 straight tool calls — proof that the Loop no longer has the old 12-step cap — and four skill cases (registry rank, frontmatter, filesystem discovery, the `skill` tool).
 
 Learn AI on [LINUX DO](https://linux.do)

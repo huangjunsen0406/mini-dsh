@@ -1,7 +1,16 @@
 import readline from 'node:readline'
 
 export const name = 'mini-cli'
-export const inject = ['sessions', 'agents', 'agentLoop', 'tools', 'systemPrompt', 'llm', 'sandbox']
+export const inject = [
+    'sessions',
+    'agents',
+    'agentLoop',
+    'tools',
+    'systemPrompt',
+    'llm',
+    'sandbox',
+    'skills',
+]
 
 /**
  * Thinnest UI layer. Session, tools, LLM, and the agent loop
@@ -31,7 +40,7 @@ export function apply(ctx, config = {}) {
 
         console.log('\nmini-dsh: a learning runtime for DSH')
         console.log(
-            'commands: /tools /history /prompt /models /model [provider/model] /reset /exit\n',
+            'commands: /tools /skills /history /prompt /models /model [provider/model] /reset /exit\n',
         )
         console.log(`model: ${agent.model}`)
         console.log(`sandbox workspace: ${ctx.sandbox.workspace}`)
@@ -83,6 +92,22 @@ export function apply(ctx, config = {}) {
                     return `- ${tool.name}: ${firstLine}`
                 })
                 console.log(lines.join('\n') || '(no tools)')
+                console.log()
+                return ask()
+            }
+
+            if (text === '/skills') {
+                const skills = await ctx.skills.list()
+                const lines = skills.map((skill) => {
+                    const flags = [
+                        skill.invocation.modelInvocable ? 'model' : null,
+                        skill.invocation.userInvocable ? 'user' : null,
+                    ]
+                        .filter(Boolean)
+                        .join(',')
+                    return `- ${skill.name} [${skill.source}/${flags}]: ${skill.description}`
+                })
+                console.log(lines.join('\n') || '(no skills)')
                 console.log()
                 return ask()
             }

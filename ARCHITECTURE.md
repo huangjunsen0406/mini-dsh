@@ -18,6 +18,7 @@ ctx.llm
 ctx.agents
 ctx.agentLoop
 ctx.sandbox
+ctx.skills
 ```
 
 ## One request
@@ -76,6 +77,24 @@ AgentLoop
 ```
 
 The AgentLoop needs no `if (mcp)` branch.
+
+## Why skills are a catalog, not prompt text
+
+Official DSH keeps skill *bodies* out of the system prompt. Mini does the same with three plugins and no loop change:
+
+```text
+.dsh/skills/<name>/SKILL.md
+    ↓
+dsh-skill-filesystem (scan + parse frontmatter)
+    ↓
+ctx.skills.list() / get()
+    ↓
+systemPrompt context: name + description only
+    ↓
+skill({ name }) tool → full body as tool/result
+```
+
+The AgentLoop needs no `if (skill)` branch. Invalid skill files are skipped; duplicate names keep the lower rank (project beats runtime).
 
 ## What the learning version deliberately omits
 

@@ -13,7 +13,7 @@ Don't clone this repo as your starting point, and don't open the source to copy 
 
 This repo is the **answer key**, not your workbook.
 
-By the end of the eight-day main track, you will have written all five abstractions of the Harness by hand and hooked up a real model. The sandbox, Bash, file tools, and Context7 are **not part of the main track**: they prove `ctx.tools` is enough, and the Loop does not change one line. To match all the source in this repo, do the **Supplement** at the end.
+By the end of the eight-day main track, you will have written all five abstractions of the Harness by hand and hooked up a real model. The sandbox, Bash, file tools, Context7, and skills are **not part of the main track**: they prove `ctx.tools` is enough, and the Loop does not change one line. To match all the source in this repo, do the **Supplement** at the end.
 
 When you compare, use the README and the source; skim `ARCHITECTURE.md` when you lose the big picture. There is no handwritten `src/utils/env.js` — env vars go through `dotenv`.
 
@@ -40,7 +40,7 @@ ctx.agents
 ctx.agentLoop
 ```
 
-`ctx.sandbox` is a policy gate added in the Supplement — don't reference it ahead of time in the main track.
+`ctx.sandbox` is a policy gate added in the Supplement — don't reference it ahead of time in the main track. `ctx.skills` is the second supplement.
 
 What a request actually goes through:
 
@@ -98,10 +98,12 @@ For cross-checking. Tick a box at each day's end. Sandbox-related files belong t
 | 6 | `plugins.config.js` `src/plugins/external-plugins.js`; change `src/index.js` to mount MCP (still no sandbox / bash / files) |
 | 7 | No new files. Cross-check against the README and run the core acceptance |
 | Supplement | `src/utils/path.js` `src/core/sandbox-runtime.js` `src/plugins/sandbox.js` `src/tools/files.js` `src/tools/bash.js`; change CLI Approval / Esc and `index.js`; add `test/integration.test.js` (add 7 tests to `core.test.js` + 2 integration tests) |
+| Skills | `src/core/skill-runtime.js` `src/core/skill-filesystem.js` `src/plugins/skills.js` `src/plugins/skill-filesystem.js` `src/tools/skill.js`; change CLI `/skills` and `index.js` (add 4 tests) |
 
 In this repo, the files you **don't hand-write — just read**: `README.md` `README.zh-CN.md` `pnpm-lock.yaml`.
 
-`test/core.test.js` is cumulative: add each day's tests to it. **By the end of Day 7 of the main track you should have 13 tests.** The Supplement adds 7 more to it, plus a separate `test/integration.test.js` holding 2 — matching this repo's **22**. Test titles must be identical to this repo's (in English), so you can cross-check:
+`test/core.test.js` is cumulative: add each day's tests to it. **By the end of Day 7 of the main track you should have 13 tests.** The sandbox Supplement adds 7 more to it, plus a separate `test/integration.test.js` holding 2 (**22**). Skills add 4 more, matching this repo's **26**. Test titles must be identical to this repo's (in English), so you can cross-check:
+
 
 | Day | Added | Total | Test title |
 |---|---|---|---|
@@ -114,8 +116,10 @@ In this repo, the files you **don't hand-write — just read**: `README.md` `REA
 | 6 | 0 | 13 | MCP has no automated tests. If it connects, verify manually with `/tools`; the CLI must start even if it doesn't |
 | 7 | 0 | 13 | All 13 core tests green = pass |
 | Supplement | 7 + 2 | 22 | `resolveInside blocks .. and absolute escapes but allows a ..hidden filename`; `resolveInside blocks a symlink inside the workspace that points out of it`; `Sandbox blocks dangerous commands and allows ordinary workspace commands`; `Sandbox approval auto-approves or throws when the user rejects`; `Sandbox expands env paths before the escape check instead of banning them`; `allowHosts uses the provided whitelist and does not hardcode localhost`; `glob matches both substrings and * / ** wildcards`; and in `test/integration.test.js`: `the whole plugin stack boots on Cordis and runs a full model -> tool -> model turn`; `external plugin loader tolerates an optional failure and enforces a required one` |
+| Skills | 4 | 26 | `SkillRuntime register returns a disposer and lower rank wins duplicate names`; `parseSkillMarkdown reads kebab-case invocation flags and rejects camelCase keys`; `FileSystemSkillProvider discovers bundle and flat skills and skips invalid files`; `skill tool loads model-invocable bodies and rejects unknown or user-only names` |
 
-**Test boundary (holds for every later day):** `pnpm test` only covers `core/` and a few exported pure functions (SSE; paths and glob arrive in the Supplement). `src/plugins/*` are thin forwards — **no Cordis integration tests**. Whether your plugins are right is judged by comparing against the source and, from Day 5 on, by manual CLI checks.
+
+**Test boundary (holds for every later day):** `pnpm test` only covers `core/` and a few exported pure functions (SSE; paths, glob, and skill parse/load arrive in the supplements). `src/plugins/*` are thin forwards — **no Cordis integration tests**. Whether your plugins are right is judged by comparing against the source and, from Day 5 on, by manual CLI checks.
 
 ---
 
@@ -210,7 +214,7 @@ src/
   core/             # pure logic, no Cordis imports
   plugins/          # thin wrappers: mount runtimes onto ctx.xxx
   models/           # not until Day 5
-  tools/            # Supplement only (bash / files)
+  tools/            # Supplement only (bash / files / skill)
   utils/
 scripts/
 test/
@@ -1268,7 +1272,8 @@ Open the README, don't look at `src/` yet — confirm you can draw the request p
 
 Run through the main-track acceptance by hand. `pnpm test` all green (13), `pnpm check` passing, and the CLI answers — the eight-day main track is done.
 
-To also write the path gate, Approval, `read_file` / `bash`, do the **Supplement**. That part takes the tests from 13 to 22.
+To also write the path gate, Approval, `read_file` / `bash`, do the **Supplement**. That part takes the tests from 13 to 22. Skills are a second supplement (22 → 26) and still do not change the Agent Loop.
+
 
 ---
 
@@ -1693,7 +1698,86 @@ await root.plugin(cli, {
 })
 ```
 
-This is the final shape of this repo's `src/index.js`. `/prompt` now shows identity, sandbox policy, and runtime context together. `/tools` has `bash` / `read_file`; `mcp__context7__*` only if Context7 is connected.
+This is the sandbox Supplement's `src/index.js`. `/prompt` now shows identity, sandbox policy, and runtime context together. `/tools` has `bash` / `read_file`; `mcp__context7__*` only if Context7 is connected. Skills mount after this.
+
+---
+
+## Skills: catalog + on-demand loader
+
+After the sandbox Supplement. The Agent Loop **still doesn't change one line**. Official DSH keeps skill bodies out of the system prompt; mini does the same.
+
+### Files to write
+
+```text
+src/core/skill-runtime.js
+src/core/skill-filesystem.js
+src/plugins/skills.js
+src/plugins/skill-filesystem.js
+src/tools/skill.js
+src/plugins/cli.js         # /skills
+src/index.js
+test/core.test.js          # add 4 tests
+.dsh/skills/hello-workspace/SKILL.md
+```
+
+### 1. SkillRuntime
+
+`registerProvider(provider)` / `register(skill)` return disposers. `list()` returns summaries sorted by name. `get(name)` asks the winning provider so file-backed bodies are reread.
+
+Duplicate names keep the **lower rank**. Project `.dsh/skills` is rank 100; runtime `register()` is 250. Invalid kebab-case names: `^[a-z0-9]+(?:-[a-z0-9]+)*$`.
+
+`parseSkillMarkdown` requires YAML frontmatter with `name` and `description`. Invocation flags are kebab-case only:
+
+- `disable-model-invocation` (default false → model can load)
+- `user-invocable` (default true)
+- camelCase keys (`userInvocable`) throw
+
+Don't pull in a YAML library — a few scalar lines are enough.
+
+### 2. FileSystemSkillProvider
+
+Scan, in rank order:
+
+- `<gitRoot>/.dsh/skills` (100)
+- `<gitRoot>/.agents/skills` (200)
+- optional `extraDirs` (300)
+
+Accept `<name>/SKILL.md` bundles and flat `<name>.md`. Nested `**/SKILL.md` is **not** discovered. Missing roots are empty, not errors. Unreadable / invalid files are skipped.
+
+Project root = nearest ancestor with `.git`; without one, the workspace cwd.
+
+### 3. skill tool + catalog fragment
+
+Register `skill({ name })` on `ctx.tools`. Unknown / non-model-invocable names throw in English so the tests match. Render:
+
+```text
+<skill_content name="...">
+<skill_resources>…</skill_resources>   # only when resourceBase is a directory
+<skill_instructions>
+body
+</skill_instructions>
+</skill_content>
+```
+
+Mini has no `agent/pre-step` inject, so the catalog is a `systemPrompt.context` named `skills:catalog` with `order: 20`. Empty catalog → empty string (assemble already skips blanks). Summaries only: name + description, max 500 characters.
+
+### CLI
+
+Add `/skills` to the command list and `inject`. Print `name [source/model,user]: description`.
+
+### Assembly (after sandbox)
+
+```js
+await root.plugin(skills)
+await root.plugin(skillFilesystem, { workspace })
+await root.plugin(skill)
+```
+
+`/prompt` then includes the Skills section when any model-invocable skill exists. `/tools` shows `skill`.
+
+### Skills tests
+
+Four tests into `test/core.test.js`, titles identical to this repo's. When done, `pnpm test` totals **26**.
 
 ---
 
@@ -1709,7 +1793,8 @@ This is the final shape of this repo's `src/index.js`. `/prompt` now shows ident
 | Day 5 real model | `deepseek.js` `runtime-context.js` `cli.js` `.env.example` | Approval, sandbox regexes |
 | Day 6 MCP | `external-plugins.js` `plugins.config.js` | `dsh-mcp-client` source, sandbox |
 | Day 7 wrap-up | `README.md` | `src/` implementation details |
-| Supplement sandbox | `path.js` `sandbox-runtime.js` `plugins/sandbox.js` `tools/*` | you may read the tests, but don't copy the 400-line regexes |
+| Supplement sandbox | `path.js` `sandbox-runtime.js` `plugins/sandbox.js` `tools/files.js` `tools/bash.js` | you may read the tests, but don't copy the 400-line regexes |
+| Skills | `skill-runtime.js` `skill-filesystem.js` `tools/skill.js` | official `packages/skill/*` |
 
 Principle: **write until it passes your own tests, then open the files to compare.**
 
@@ -1739,7 +1824,7 @@ LLM Adapter
 Agent Loop
 ```
 
-CLI and MCP exist to prove these five abstractions are sufficient. So do the sandbox / Bash / file tools — which is why they're in the Supplement, not the main track.
+CLI and MCP exist to prove these five abstractions are sufficient. So do the sandbox / Bash / file tools and skills — which is why they're in the supplements, not the main track.
 
 ---
 
@@ -1760,7 +1845,7 @@ CLI and MCP exist to prove these five abstractions are sufficient. So do the san
 11. Esc cancels an in-flight agent run — and the session still works afterwards: send another message and it goes through, because every `tool_call` in the log has a matching `tool/result`
 12. `pnpm test` and `pnpm check` fully green; `test/core.test.js` has **13** tests
 
-### Supplement (matches this repo's 22)
+### Supplement (22 so far)
 
 13. File tools reject `../etc/passwd`; the `..hidden` filename inside the workspace is not falsely killed; a symlink inside the workspace pointing out of it is rejected too — both for a file that exists and for one about to be created
 14. `rm -rf src`, `curl https://example.com`, `curl ... | sh` are denied; `rm file.txt` is allowed
@@ -1769,6 +1854,14 @@ CLI and MCP exist to prove these five abstractions are sufficient. So do the san
 17. Writes and Bash ask `[Y/n]` first; Esc doesn't misfire during approval
 18. `test/integration.test.js` boots the real plugin stack on Cordis and runs a full turn; the external plugin loader tolerates an optional failure and rejects a required one
 19. `pnpm test` totals 22 (20 in `test/core.test.js` + 2 in `test/integration.test.js`), matching this repo
+
+### Skills (matches this repo's 26)
+
+20. A project skill at rank 100 wins a same-name runtime registration
+21. Frontmatter `user-invocable: false` is parsed; `userInvocable` is rejected
+22. `.dsh/skills/<name>/SKILL.md` and `<name>.md` are discovered; nested `too-deep/SKILL.md` is not
+23. `skill` loads a model-invocable body and rejects unknown / user-only names; `pnpm test` totals 26
+
 
 ---
 
@@ -1787,6 +1880,7 @@ CLI commands:
 
 ```text
 /tools
+/skills
 /models
 /model
 /model deepseek/deepseek-v4-pro

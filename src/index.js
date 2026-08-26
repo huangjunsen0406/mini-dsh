@@ -9,10 +9,13 @@ import * as llm from './plugins/llm.js'
 import * as runtimeContext from './plugins/runtime-context.js'
 import * as sandbox from './plugins/sandbox.js'
 import * as sessions from './plugins/sessions.js'
+import * as skillFilesystem from './plugins/skill-filesystem.js'
+import * as skills from './plugins/skills.js'
 import * as systemPrompt from './plugins/system-prompt.js'
 import * as tools from './plugins/tools.js'
 import * as bash from './tools/bash.js'
 import * as files from './tools/files.js'
+import * as skill from './tools/skill.js'
 
 // Load .env before plugins and plugin config that read environment variables.
 dotenv.config()
@@ -31,9 +34,12 @@ await root.plugin(agentLoop)
 
 await root.plugin(runtimeContext, { workspace })
 await root.plugin(sandbox, { workspace })
+await root.plugin(skills)
+await root.plugin(skillFilesystem, { workspace })
 await root.plugin(deepseek)
 await root.plugin(bash, { workspace })
 await root.plugin(files, { workspace })
+await root.plugin(skill)
 
 await root.plugin(externalPlugins, { entries: externalConfig })
 await root.plugin(cli, {

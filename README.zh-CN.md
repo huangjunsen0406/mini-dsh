@@ -14,7 +14,9 @@
 4. LLM Provider Adapter
 5. Agent Loop -> model -> tool -> model -> answer
 
-另外保留了 Bash/File 工具和官方 `@deepseek-ai/dsh-mcp-client` + Context7，用来验证“Everything is a Plugin”。Context7 是可选的：连不上时 CLI 照样启动，只是没有那些 MCP 工具。
+另外保留了 Bash/File 工具、本地 skill 目录，以及官方 `@deepseek-ai/dsh-mcp-client` + Context7，用来验证“Everything is a Plugin”。Context7 是可选的：连不上时 CLI 照样启动，只是没有那些 MCP 工具。
+
+Skill 按官方合同缩水实现：扫描 `.dsh/skills` 和 `.agents/skills`，system prompt 里只放 **name + description**，正文等模型调用 `skill({ name })` 再加载。Agent Loop 一行不改。
 
 ## 演示
 
@@ -34,7 +36,7 @@ cp .env.example .env
 pnpm start
 ```
 
-`.env.example` 里写的是 `deepseek/deepseek-v4-flash`；如果完全没有 `MINI_DSH_MODEL`（例如没复制 `.env`），入口回退到 `deepseek/deepseek-v4-pro`（`src/index.js:41`）。
+`.env.example` 里写的是 `deepseek/deepseek-v4-flash`；如果完全没有 `MINI_DSH_MODEL`（例如没复制 `.env`），入口回退到 `deepseek/deepseek-v4-pro`（`src/index.js:47`）。
 
 可选：填写 `CONTEXT7_API_KEY`。`mcp.context7.com` 不可达时只会打 `[plugin] failed`，不会把进程打挂。
 
@@ -52,6 +54,7 @@ Context7 连上之后的路径：
 
 ```text
 /tools
+/skills
 /models
 /model
 /model deepseek/deepseek-v4-pro
@@ -61,6 +64,8 @@ Context7 连上之后的路径：
 /reset
 /exit
 ```
+
+把目录包放到 `.dsh/skills/<name>/SKILL.md`（kebab-case 的 `name` + `description` frontmatter）。`/skills` 列出发现结果；`/prompt` 能看到目录片段。
 
 写文件和 Bash 执行前会问 `[Y/n]`。Agent 跑起来后按 **Esc** 取消当前轮（方向键不会误取消）。
 
@@ -141,6 +146,12 @@ src/tools/files.js
 src/plugins/external-plugins.js
 plugins.config.js
   ↓
+src/core/skill-runtime.js
+src/core/skill-filesystem.js
+src/plugins/skills.js
+src/plugins/skill-filesystem.js
+src/tools/skill.js
+  ↓
 test/core.test.js   ← 行为文档：每个 runtime 都有对应示例
 ```
 
@@ -154,9 +165,10 @@ test/core.test.js   ← 行为文档：每个 runtime 都有对应示例
     sessions     systemPrompt tools        llm          agents       agentLoop
                               │            │                         Agent
                               bash / files DeepSeek
+                              skill
                               │
-                              ctx.sandbox
-                              path / command / Y/n
+                              ctx.sandbox          ctx.skills
+                              path / command / Y/n   .dsh/skills
                               └── dsh-mcp-client (optional)
                                            │
                                         Context7
@@ -173,6 +185,6 @@ pnpm test
 pnpm check
 ```
 
-测试里包含一个 Agent 连续执行 20 次工具调用后才结束的案例，用来证明 Agent Loop 已经不再有原来的 12-step 正常上限。
+测试里包含一个 Agent 连续执行 20 次工具调用后才结束的案例，用来证明 Agent Loop 已经不再有原来的 12-step 正常上限；另外有四条 skill 用例（注册表 rank、frontmatter、文件系统发现、`skill` 工具）。
 
 学AI上[LINUX DO](https://linux.do)

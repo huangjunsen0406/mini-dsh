@@ -11,10 +11,13 @@ import * as llm from '../src/plugins/llm.js'
 import * as runtimeContext from '../src/plugins/runtime-context.js'
 import * as sandbox from '../src/plugins/sandbox.js'
 import * as sessions from '../src/plugins/sessions.js'
+import * as skillFilesystem from '../src/plugins/skill-filesystem.js'
+import * as skills from '../src/plugins/skills.js'
 import * as systemPrompt from '../src/plugins/system-prompt.js'
 import * as tools from '../src/plugins/tools.js'
 import * as bash from '../src/tools/bash.js'
 import * as files from '../src/tools/files.js'
+import * as skill from '../src/tools/skill.js'
 
 /**
  * Boots the same plugin stack as src/index.js (minus the CLI) on a real
@@ -34,8 +37,11 @@ test('the whole plugin stack boots on Cordis and runs a full model -> tool -> mo
         await root.plugin(agentLoop)
         await root.plugin(runtimeContext, { workspace })
         await root.plugin(sandbox, { workspace, autoApprove: true })
+        await root.plugin(skills)
+        await root.plugin(skillFilesystem, { workspace })
         await root.plugin(bash, { workspace })
         await root.plugin(files, { workspace })
+        await root.plugin(skill)
 
         // Services were registered by plugins, not constructed by hand.
         assert.ok(root.sessions)
@@ -45,6 +51,7 @@ test('the whole plugin stack boots on Cordis and runs a full model -> tool -> mo
         assert.ok(root.agents)
         assert.ok(root.agentLoop)
         assert.ok(root.sandbox)
+        assert.ok(root.skills)
 
         // ctx.effect-based registrations from runtime-context/sandbox/tools all ran.
         const toolNames = root.tools
@@ -57,6 +64,7 @@ test('the whole plugin stack boots on Cordis and runs a full model -> tool -> mo
             'glob',
             'grep',
             'read_file',
+            'skill',
             'write_file',
         ])
 

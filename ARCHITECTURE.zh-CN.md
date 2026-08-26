@@ -18,6 +18,7 @@ ctx.llm
 ctx.agents
 ctx.agentLoop
 ctx.sandbox
+ctx.skills
 ```
 
 ## 一次请求
@@ -76,6 +77,24 @@ AgentLoop
 ```
 
 AgentLoop 不需要写任何 `if (mcp)` 特殊分支。
+
+## 为什么 skill 是目录，不是整段 prompt
+
+官方 DSH 不把 skill **正文**塞进 system prompt。学习版用三个插件做同一件事，Loop 一行不改：
+
+```text
+.dsh/skills/<name>/SKILL.md
+    ↓
+dsh-skill-filesystem（扫盘 + 解析 frontmatter）
+    ↓
+ctx.skills.list() / get()
+    ↓
+systemPrompt context：只有 name + description
+    ↓
+skill({ name }) 工具 → 正文作为 tool/result
+```
+
+AgentLoop 不需要 `if (skill)` 分支。坏文件跳过；同名保留 rank 更小的（项目目录赢过 runtime 注册）。
 
 ## 学习版刻意没有什么
 

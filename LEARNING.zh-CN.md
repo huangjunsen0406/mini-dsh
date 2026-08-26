@@ -13,7 +13,7 @@
 
 本仓库是**答案册**，不是作业本。
 
-八天主线结束时，你已经亲手写完 Harness 的五个抽象，并能挂上真模型。沙箱、Bash、文件工具、Context7 **不是主线**：它们证明 `ctx.tools` 够用，但 Loop 一行都不用改。想对齐本仓库全部源码，再做文末的**补充篇**。
+八天主线结束时，你已经亲手写完 Harness 的五个抽象，并能挂上真模型。沙箱、Bash、文件工具、Context7、skills **不是主线**：它们证明 `ctx.tools` 够用，但 Loop 一行都不用改。想对齐本仓库全部源码，再做文末的**补充篇**。
 
 对照时看 `README.zh-CN.md` 和源码；想不起整体结构时扫一眼 `ARCHITECTURE.zh-CN.md`。仓库没有手写的 `src/utils/env.js`——环境变量用 `dotenv`。
 
@@ -40,7 +40,7 @@ ctx.agents
 ctx.agentLoop
 ```
 
-`ctx.sandbox` 是补充篇才加的策略闸门，主线里不要提前引用。
+`ctx.sandbox` 是补充篇才加的策略闸门，主线里不要提前引用。`ctx.skills` 是第二份补充。
 
 一次请求实际走的是：
 
@@ -98,10 +98,12 @@ Agent Loop **不知道** Bash、文件、Context7 是什么。它只认识 `ctx.
 | 6 | `plugins.config.js` `src/plugins/external-plugins.js`；改 `src/index.js` 挂 MCP（仍不含 sandbox / bash / files） |
 | 7 | 无新文件。对照 `README.zh-CN.md`，跑核心验收 |
 | 补充 | `src/utils/path.js` `src/core/sandbox-runtime.js` `src/plugins/sandbox.js` `src/tools/files.js` `src/tools/bash.js`；改 CLI Approval / Esc 和 `index.js`；新增 `test/integration.test.js`（`core.test.js` 追加 7 条 + 集成测试 2 条） |
+| Skills | `src/core/skill-runtime.js` `src/core/skill-filesystem.js` `src/plugins/skills.js` `src/plugins/skill-filesystem.js` `src/tools/skill.js`；改 CLI `/skills` 和 `index.js`（测试追加 4 条） |
 
 本仓库里**不用手写、读完即可**的：`README.md` `README.zh-CN.md` `pnpm-lock.yaml`。
 
-`test/core.test.js` 是累计文件：每天往里加当天的测试。**主线第 7 天结束应是 13 条**。补充篇再往里加 7 条，另外单独写一个装着 2 条的 `test/integration.test.js`，才和本仓库的 **22 条**对齐。标题必须和本仓库同名（英文），方便对照：
+`test/core.test.js` 是累计文件：每天往里加当天的测试。**主线第 7 天结束应是 13 条**。沙箱补充篇再往里加 7 条，另外单独写一个装着 2 条的 `test/integration.test.js`（**22 条**）。Skills 再加 4 条，才和本仓库的 **26 条**对齐。标题必须和本仓库同名（英文），方便对照：
+
 
 | 天 | 新增 | 累计 | 测试标题 |
 |---|---|---|---|
@@ -114,8 +116,10 @@ Agent Loop **不知道** Bash、文件、Context7 是什么。它只认识 `ctx.
 | 6 | 0 | 13 | MCP 没有自动化测试。连得上时用 `/tools` 手工验；连不上 CLI 也必须能进 |
 | 7 | 0 | 13 | 核心 13 条全绿即过关 |
 | 补充 | 7 + 2 | 22 | `resolveInside blocks .. and absolute escapes but allows a ..hidden filename`；`resolveInside blocks a symlink inside the workspace that points out of it`；`Sandbox blocks dangerous commands and allows ordinary workspace commands`；`Sandbox approval auto-approves or throws when the user rejects`；`Sandbox expands env paths before the escape check instead of banning them`；`allowHosts uses the provided whitelist and does not hardcode localhost`；`glob matches both substrings and * / ** wildcards`；以及 `test/integration.test.js` 里的：`the whole plugin stack boots on Cordis and runs a full model -> tool -> model turn`；`external plugin loader tolerates an optional failure and enforces a required one` |
+| Skills | 4 | 26 | `SkillRuntime register returns a disposer and lower rank wins duplicate names`；`parseSkillMarkdown reads kebab-case invocation flags and rejects camelCase keys`；`FileSystemSkillProvider discovers bundle and flat skills and skips invalid files`；`skill tool loads model-invocable bodies and rejects unknown or user-only names` |
 
-**测试边界（后面每天都成立）：** `pnpm test` 只测 `core/` 和少量可导出的纯函数（SSE；补充篇才有路径、glob）。`src/plugins/*` 是薄转发，**没有 Cordis 集成测试**。插件对不对，靠对照源码 + 第 5 天起用 CLI 手工验。
+
+**测试边界（后面每天都成立）：** `pnpm test` 只测 `core/` 和少量可导出的纯函数（SSE；路径、glob、skill 的解析/加载在补充篇）。`src/plugins/*` 是薄转发，**没有 Cordis 集成测试**。插件对不对，靠对照源码 + 第 5 天起用 CLI 手工验。
 
 ---
 
@@ -210,7 +214,7 @@ src/
   core/             # 纯逻辑，不 import Cordis
   plugins/          # 薄封装：把 runtime 挂到 ctx.xxx
   models/           # 第 5 天才写
-  tools/            # 补充篇才写（bash / files）
+  tools/            # 补充篇才写（bash / files / skill）
   utils/
 scripts/
 test/
@@ -1268,7 +1272,8 @@ export default [
 
 手工过一遍主线验收。`pnpm test` 13 条全绿、`pnpm check` 过，CLI 能问答，就算八天主线结束。
 
-想把路径闸门、Approval、`read_file` / `bash` 也写上，再做**补充篇**。那部分才把测试从 13 条补到 22 条。
+想把路径闸门、Approval、`read_file` / `bash` 也写上，再做**补充篇**。那部分才把测试从 13 条补到 22 条。Skills 是第二份补充（22 → 26），仍然不改 Agent Loop。
+
 
 ---
 
@@ -1693,7 +1698,86 @@ await root.plugin(cli, {
 })
 ```
 
-这就是本仓库 `src/index.js` 的最终形态。`/prompt` 里这时才同时有 identity、sandbox policy、runtime context。`/tools` 里应有 `bash` / `read_file`；Context7 连得上才有 `mcp__context7__*`。
+这就是沙箱补充篇的 `src/index.js`。`/prompt` 里这时才同时有 identity、sandbox policy、runtime context。`/tools` 里应有 `bash` / `read_file`；Context7 连得上才有 `mcp__context7__*`。Skills 在这之后再挂。
+
+---
+
+## Skills：目录 + 按需加载
+
+沙箱补充篇之后再来。Agent Loop **仍然一行都不用改**。官方 DSH 不把 skill 正文塞进 system prompt；mini 也一样。
+
+### 要写的文件
+
+```text
+src/core/skill-runtime.js
+src/core/skill-filesystem.js
+src/plugins/skills.js
+src/plugins/skill-filesystem.js
+src/tools/skill.js
+src/plugins/cli.js         # /skills
+src/index.js
+test/core.test.js          # 追加 4 条
+.dsh/skills/hello-workspace/SKILL.md
+```
+
+### 1. SkillRuntime
+
+`registerProvider(provider)` / `register(skill)` 返回 disposer。`list()` 按 name 排序返回摘要。`get(name)` 问获胜的 provider，所以磁盘上的正文每次重读，不缓存。
+
+同名保留 **rank 更小的**。项目 `.dsh/skills` 是 100；runtime `register()` 是 250。名字必须是 kebab-case：`^[a-z0-9]+(?:-[a-z0-9]+)*$`。
+
+`parseSkillMarkdown` 要求 YAML frontmatter，至少 `name` 和 `description`。调用开关只用 kebab-case：
+
+- `disable-model-invocation`（默认 false → 模型可加载）
+- `user-invocable`（默认 true）
+- camelCase 键（`userInvocable`）直接抛错
+
+不要引入 YAML 库——几行标量就够。
+
+### 2. FileSystemSkillProvider
+
+按 rank 扫描：
+
+- `<gitRoot>/.dsh/skills`（100）
+- `<gitRoot>/.agents/skills`（200）
+- 可选 `extraDirs`（300）
+
+接受 `<name>/SKILL.md` 目录包和扁平的 `<name>.md`。嵌套的 `**/SKILL.md` **不发现**。缺目录当空，不当错。读不了 / 不合法的文件跳过。
+
+项目根 = 最近带 `.git` 的祖先；没有就用 workspace cwd。
+
+### 3. skill 工具 + 目录片段
+
+在 `ctx.tools` 上注册 `skill({ name })`。未知 / 模型不可调用的名字用英文抛错，测试才能对上。渲染：
+
+```text
+<skill_content name="...">
+<skill_resources>…</skill_resources>   # 仅当 resourceBase 是 directory
+<skill_instructions>
+正文
+</skill_instructions>
+</skill_content>
+```
+
+mini 没有 `agent/pre-step` inject，所以目录是名为 `skills:catalog`、`order: 20` 的 `systemPrompt.context`。空目录返回空字符串（assemble 本来就会跳过空白）。只放摘要：name + description，最长 500 字。
+
+### CLI
+
+命令列表和 `inject` 加上 `/skills`。打印 `name [source/model,user]: description`。
+
+### 装配（沙箱之后）
+
+```js
+await root.plugin(skills)
+await root.plugin(skillFilesystem, { workspace })
+await root.plugin(skill)
+```
+
+有模型可调用的 skill 时，`/prompt` 会出现 Skills 段。`/tools` 里有 `skill`。
+
+### Skills 测试
+
+四条写进 `test/core.test.js`，标题和本仓库同名。写完 `pnpm test` 一共 **26 条**。
 
 ---
 
@@ -1709,7 +1793,8 @@ await root.plugin(cli, {
 | 第 5 天真模型 | `deepseek.js` `runtime-context.js` `cli.js` `.env.example` | Approval、沙箱正则 |
 | 第 6 天 MCP | `external-plugins.js` `plugins.config.js` | `dsh-mcp-client` 源码、sandbox |
 | 第 7 天收束 | `README.zh-CN.md` | `src/` 实现细节 |
-| 补充篇沙箱 | `path.js` `sandbox-runtime.js` `plugins/sandbox.js` `tools/*` | 可以看测试，先别抄 400 行正则 |
+| 补充篇沙箱 | `path.js` `sandbox-runtime.js` `plugins/sandbox.js` `tools/files.js` `tools/bash.js` | 可以看测试，先别抄 400 行正则 |
+| Skills | `skill-runtime.js` `skill-filesystem.js` `tools/skill.js` | 官方 `packages/skill/*` |
 
 原则：**先自己写到能测过，再打开对照文件。**
 
@@ -1739,7 +1824,7 @@ LLM Adapter
 Agent Loop
 ```
 
-CLI、MCP 是为了证明这五个抽象够用。沙箱 / Bash / 文件工具也是，所以放在补充篇，不是主线。
+CLI、MCP 是为了证明这五个抽象够用。沙箱 / Bash / 文件工具和 skills 也是，所以放在补充篇，不是主线。
 
 ---
 
@@ -1760,7 +1845,7 @@ CLI、MCP 是为了证明这五个抽象够用。沙箱 / Bash / 文件工具也
 11. Esc 能取消一轮进行中的 agent run——而且取消之后会话还能继续用：再发一条消息能正常走通，因为日志里每个 `tool_call` 都有配对的 `tool/result`
 12. `pnpm test` 和 `pnpm check` 全绿，`test/core.test.js` 一共 **13 条**
 
-### 补充篇（对齐本仓库 22 条）
+### 补充篇（累计 22 条）
 
 13. 文件工具写 `../etc/passwd` 被挡住；workspace 内 `..hidden` 文件名不被误杀；workspace 内指向外面的软链同样被挡——已存在的文件和即将新建的文件都要挡住
 14. `rm -rf src`、`curl https://example.com`、`curl ... | sh` 被沙箱拒绝；`rm file.txt` 放行
@@ -1769,6 +1854,14 @@ CLI、MCP 是为了证明这五个抽象够用。沙箱 / Bash / 文件工具也
 17. 写文件和 Bash 前问 `[Y/n]`；审批期间 Esc 不误取消
 18. `test/integration.test.js` 能在真实 Cordis 上把插件栈启起来并跑完一轮；外部插件加载器容忍 optional 失败、拒绝 required 失败
 19. `pnpm test` 一共 22 条（`test/core.test.js` 20 条 + `test/integration.test.js` 2 条），和本仓库一致
+
+### Skills（对齐本仓库 26 条）
+
+20. rank 100 的项目 skill 赢过同名 runtime 注册
+21. frontmatter `user-invocable: false` 能解析；`userInvocable` 被拒绝
+22. `.dsh/skills/<name>/SKILL.md` 和 `<name>.md` 能发现；嵌套的 `too-deep/SKILL.md` 不能
+23. `skill` 能加载模型可调用的正文，拒绝未知 / 仅用户技能；`pnpm test` 一共 26 条
+
 
 ---
 
@@ -1787,6 +1880,7 @@ CLI 命令：
 
 ```text
 /tools
+/skills
 /models
 /model
 /model deepseek/deepseek-v4-pro
