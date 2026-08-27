@@ -1,3 +1,5 @@
+const CANCELLED_RESULT = 'ToolError: the run was cancelled before this tool ran'
+
 /**
  * Runs the model → tool → model loop against a session.
  *
@@ -69,9 +71,26 @@ export class AgentLoopRuntime {
             })
 
             // A single model turn may request several tools; run them all before the next turn.
+            //
+            // Cancelling must not abandon a tool_call halfway: deriveMessages() would
+            // then project an assistant tool_calls message whose ids have no matching
+            // tool reply, which Chat Completions rejects — one cancelled turn would
+            // poison every later turn in the session. So a cancelled run still records
+            // a result for every remaining call, and only throws once the log is
+            // consistent again.
+            let cancelled = false
+
             for (const call of toolCalls) {
-                if (signal?.aborted) {
-                    throw new Error('Agent run cancelled')
+                cancelled ||= Boolean(signal?.aborted)
+
+                if (cancelled) {
+                    this.sessions.append(sessionId, 'tool/result', {
+                        toolCallId: call.id,
+                        name: call.name,
+                        isError: true,
+                        content: CANCELLED_RESULT,
+                    })
+                    continue
                 }
 
                 onToolCall?.(call)
@@ -92,6 +111,10 @@ export class AgentLoopRuntime {
                     isError: result.isError,
                     content: renderedContent,
                 })
+            }
+
+            if (cancelled) {
+                throw new Error('Agent run cancelled')
             }
 
             // Fall through to the next model turn.

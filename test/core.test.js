@@ -165,6 +165,62 @@ test('Agent loop completes a model -> tool -> model turn', async () => {
     assert.equal(calls, 2)
 })
 
+test('Cancelling a multi-tool turn still records a result for every tool_call', async () => {
+    const sessions = new SessionRuntime()
+    const systemPrompt = new SystemPromptRuntime()
+    const tools = new ToolRuntime()
+    const llm = new LlmRuntime()
+    const agents = new AgentRuntime()
+
+    const abort = new AbortController()
+
+    tools.register({
+        name: 'slow',
+        description: 'slow',
+        parameters: { type: 'object', properties: {} },
+        // Cancel while the first of two calls is in flight.
+        execute: async () => {
+            abort.abort()
+            return 'first result'
+        },
+    })
+
+    llm.register(
+        'mock',
+        {
+            models: ['demo'],
+            async chat() {
+                return {
+                    toolCalls: [
+                        { id: 't1', name: 'slow', arguments: {} },
+                        { id: 't2', name: 'slow', arguments: {} },
+                    ],
+                }
+            },
+        },
+        { defaultModel: 'demo' },
+    )
+
+    const s = sessions.create()
+    const loop = new AgentLoopRuntime({ sessions, systemPrompt, tools, llm })
+    const agent = agents.create({ sessionId: s.id, model: 'mock/demo', loop })
+
+    await assert.rejects(() => agent.send('run both', { signal: abort.signal }), /cancelled/i)
+
+    // Every id in the assistant tool_calls message must have a tool reply, or
+    // the next request in this session is rejected by the provider.
+    const messages = sessions.deriveMessages(s.id)
+    const requested = messages
+        .filter((message) => message.tool_calls)
+        .flatMap((message) => message.tool_calls.map((call) => call.id))
+    const answered = messages
+        .filter((message) => message.role === 'tool')
+        .map((message) => message.tool_call_id)
+
+    assert.deepEqual(requested, ['t1', 't2'])
+    assert.deepEqual(answered, ['t1', 't2'])
+})
+
 test('Agent loop has no 12-step cap and finishes after 20 tool calls', async () => {
     const sessions = new SessionRuntime()
     const systemPrompt = new SystemPromptRuntime()
