@@ -1777,7 +1777,179 @@ await root.plugin(skill)
 
 ### Skills tests
 
-Four tests into `test/core.test.js`, titles identical to this repo's. When done, `pnpm test` totals **26**.
+Four tests into `test/core.test.js`, titles identical to this repo's. Key points:
+
+1. `SkillRuntime register returns a disposer and lower rank wins duplicate names`: register a runtime skill named `hello-workspace`, then register a provider that offers the same name at rank 100. Assert `list()` returns one entry and it is the **provider's** description — lower rank wins — and that `get()` goes back to the provider for the body rather than serving a cached copy. After disposing the runtime registration the count stays 1, because the provider's copy was the one winning all along.
+2. `parseSkillMarkdown reads kebab-case invocation flags and rejects camelCase keys`: parse frontmatter with `disable-model-invocation: false` and `user-invocable: false` and assert the flags land on `invocation`. Then assert three rejections: no frontmatter returns `undefined`, a camelCase `userInvocable` throws `/user-invocable/`, and a non-kebab name throws `/invalid skill name/`. Being strict about the key spelling is the point — a silently ignored `userInvocable` would leave a skill model-invocable when the author meant the opposite.
+3. `FileSystemSkillProvider discovers bundle and flat skills and skips invalid files`: build a temp project with `.git`, then put four things under `.dsh/skills/` — a `hello-workspace/SKILL.md` bundle, a flat `flat-note.md`, a `broken.md` with no frontmatter, and a `nested/too-deep/SKILL.md`. Assert exactly `['flat-note', 'hello-workspace']` are found: invalid files are skipped rather than throwing, and discovery is **not** recursive. Clean the temp dir in a `finally`.
+4. `skill tool loads model-invocable bodies and rejects unknown or user-only names`: register one ordinary skill and one with `modelInvocable: false`. Assert the body loads and the render includes `<skill_resources>`, then assert three rejections — unknown name, user-only skill, and a non-kebab name. This is the gate that keeps the catalog honest: a name in the list is not by itself permission to load it.
+
+```js
+test('SkillRuntime register returns a disposer and lower rank wins duplicate names', async () => {
+  const { SkillRuntime, isModelInvocable } = await import('../src/core/skill-runtime.js')
+  const skills = new SkillRuntime()
+
+  const dispose = skills.register({
+    name: 'hello-workspace',
+    description: 'runtime copy',
+    content: 'from register()',
+  })
+
+  skills.registerProvider({
+    name: 'disk',
+    async list() {
+      return [
+        {
+          name: 'hello-workspace',
+          description: 'project copy',
+          invocation: { modelInvocable: true, userInvocable: true },
+          source: 'project-dsh',
+          provider: 'disk',
+          rank: 100,
+          locator: { path: '/tmp/hello/SKILL.md', directory: '/tmp/hello' },
+        },
+      ]
+    },
+    async get(candidate) {
+      return { ...candidate, content: 'from disk' }
+    },
+  })
+
+  const listed = await skills.list()
+  assert.equal(listed.length, 1)
+  assert.equal(listed[0].description, 'project copy')
+  assert.equal(isModelInvocable(listed[0]), true)
+  assert.equal((await skills.get('hello-workspace')).content, 'from disk')
+
+  dispose()
+  assert.equal((await skills.list()).length, 1)
+})
+
+test('parseSkillMarkdown reads kebab-case invocation flags and rejects camelCase keys', async () => {
+  const { parseSkillMarkdown, parseFrontmatter } = await import('../src/core/skill-runtime.js')
+
+  const parsed = parseSkillMarkdown(
+    [
+      '---',
+      'name: model-only-skill',
+      'description: Only the model may load this.',
+      'disable-model-invocation: false',
+      'user-invocable: false',
+      'whenToUse: routing hint',
+      '---',
+      '',
+      'Body here.',
+      '',
+    ].join('\n'),
+  )
+
+  assert.equal(parsed.name, 'model-only-skill')
+  assert.equal(parsed.whenToUse, 'routing hint')
+  assert.equal(parsed.invocation.modelInvocable, true)
+  assert.equal(parsed.invocation.userInvocable, false)
+  assert.equal(parsed.content, 'Body here.')
+
+  assert.equal(parseFrontmatter('no frontmatter\n'), undefined)
+  assert.throws(
+    () => parseSkillMarkdown('---\nname: x\ndescription: y\nuserInvocable: false\n---\nbody\n'),
+    /user-invocable/,
+  )
+  assert.throws(
+    () => parseSkillMarkdown('---\nname: Not_Kebab\ndescription: y\n---\nbody\n'),
+    /invalid skill name/,
+  )
+})
+
+test('FileSystemSkillProvider discovers bundle and flat skills and skips invalid files', async () => {
+  const fs = await import('node:fs/promises')
+  const os = await import('node:os')
+  const path = await import('node:path')
+  const { FileSystemSkillProvider } = await import('../src/core/skill-filesystem.js')
+
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'mini-dsh-skills-'))
+  await fs.mkdir(path.join(root, '.git'))
+  await fs.mkdir(path.join(root, '.dsh/skills/hello-workspace'), { recursive: true })
+  await fs.writeFile(
+    path.join(root, '.dsh/skills/hello-workspace/SKILL.md'),
+    [
+      '---',
+      'name: hello-workspace',
+      'description: Workspace orientation.',
+      '---',
+      'Load me first.',
+      '',
+    ].join('\n'),
+  )
+  await fs.writeFile(
+    path.join(root, '.dsh/skills/flat-note.md'),
+    [
+      '---',
+      'name: flat-note',
+      'description: A flat markdown skill.',
+      '---',
+      'Flat body.',
+      '',
+    ].join('\n'),
+  )
+  await fs.writeFile(path.join(root, '.dsh/skills/broken.md'), 'not a skill\n')
+  await fs.mkdir(path.join(root, '.dsh/skills/nested/too-deep'), { recursive: true })
+  await fs.writeFile(
+    path.join(root, '.dsh/skills/nested/too-deep/SKILL.md'),
+    ['---', 'name: too-deep', 'description: Must not be discovered.', '---', 'nope', ''].join(
+      '\n',
+    ),
+  )
+
+  try {
+    const provider = new FileSystemSkillProvider({ workspace: root })
+    const listed = await provider.list()
+    const names = listed.map(skill => skill.name).sort()
+    assert.deepEqual(names, ['flat-note', 'hello-workspace'])
+
+    const loaded = await provider.get(listed.find(skill => skill.name === 'hello-workspace'))
+    assert.equal(loaded.content, 'Load me first.')
+    assert.equal(loaded.resourceBase.kind, 'directory')
+  } finally {
+    await fs.rm(root, { recursive: true, force: true })
+  }
+})
+
+test('skill tool loads model-invocable bodies and rejects unknown or user-only names', async () => {
+  const { SkillRuntime } = await import('../src/core/skill-runtime.js')
+  const { executeSkill, renderSkillContent } = await import('../src/tools/skill.js')
+  const skills = new SkillRuntime()
+
+  skills.register({
+    name: 'hello-workspace',
+    description: 'orientation',
+    content: 'Follow ARCHITECTURE.md.',
+    resourceBase: { kind: 'directory', path: '/tmp/hello' },
+  })
+  skills.register({
+    name: 'user-only-skill',
+    description: 'humans only',
+    content: 'secret',
+    invocation: { modelInvocable: false, userInvocable: true },
+  })
+
+  const loaded = await executeSkill(skills, 'hello-workspace')
+  assert.equal(loaded.name, 'hello-workspace')
+  assert.match(renderSkillContent(loaded), /Follow ARCHITECTURE.md/)
+  assert.match(renderSkillContent(loaded), /<skill_resources>/)
+
+  await assert.rejects(
+    () => executeSkill(skills, 'missing-skill'),
+    /unknown or no longer available/,
+  )
+  await assert.rejects(
+    () => executeSkill(skills, 'user-only-skill'),
+    /not available for model invocation/,
+  )
+  await assert.rejects(() => executeSkill(skills, 'Not_Kebab'), /invalid skill name/)
+})
+```
+
+When done, `pnpm test` totals **26**.
 
 ---
 
