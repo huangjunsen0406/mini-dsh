@@ -1270,7 +1270,7 @@ Run through the main-track acceptance by hand. `pnpm test` all green (13), `pnpm
 
 To also write the path gate, Approval, `read_file` / `bash`, do the **Supplement**. That part takes the tests from 13 to 22.
 
-To also write the token meter + compaction that keeps the infinite loop alive in long sessions, do **Supplement 2**. That part takes the tests from 18 to 25.
+To also write the token meter + compaction that keeps the infinite loop alive in long sessions, do **Supplement 2**. That part takes the tests from 22 to 29.
 
 ---
 
@@ -1743,7 +1743,260 @@ Capture `choice.finish_reason` in the DeepSeek SSE loop and return it as `finish
 
 ### Supplement 2 tests
 
-Seven tests: meter math, projection-not-log, tool-pair integrity, stacked compaction, threshold gating, in-loop auto-compaction, and max-tokens reporting. When done, **25** total.
+Seven tests into `test/core.test.js`, titles identical to this repo's. Key points:
+
+1. `TokenMeter estimates text at four chars per token plus per-message overhead`: `''` is 0, `'abcd'` is 1, `'abcde'` is 2 — it rounds up. A 40-char message is `10 + 4`, tool_calls contribute through their JSON, and `measure()` is exactly the sum of `estimateMessage()`. Deliberately one fixed heuristic and not a provider tokenizer: the meter only answers "roughly how full", and model capacity belongs to the adapter.
+2. `Compaction rewrites the projection, not the log, and keeps recent events verbatim`: five message events, `keepEvents: 2`, assert `upToSeq` is 4 and the projection is summary + the two kept messages. Then assert the log still holds all three `user/message` events and exactly one `session/compact`. That last pair of assertions is the whole thesis — compaction changes what the model sees, never what happened.
+3. `Compaction cuts only at valid boundaries so tool pairs stay intact`: build a log whose tool pair sits exactly where `keepEvents: 2` wants to cut. Assert the compacted prefix grew past the pair instead of splitting it, so no assistant tool_calls message is left in the projection without its results. This is the one detail that makes compaction safe to run mid-loop.
+4. `Stacked compactions keep only the newest summary`: four turns, compact twice with `keepEvents: 4`, assert exactly one summary remains and the kept messages are turns 3-4. The older summary is not lost — `renderTranscript` feeds it into the newer one, which is why only the newest needs to survive in the projection.
+5. `maybeCompact triggers only past the threshold`: with `threshold: 1`, `shouldCompact()` is true after two user turns, yet `maybeCompact()` still returns null because there are fewer message events than the `keepEvents` floor. Two independent gates — being over budget is not on its own a reason to compact.
+6. `Agent loop compacts a long session automatically at the step boundary`: a mock that returns six tool calls before answering, a tool returning 400 characters, `threshold: 10` and `keepEvents: 4` so compaction must fire mid-run. Assert the summarizer ran, the projection now starts with the summary, and a `session/compact` event exists. This is what lets the loop survive an arbitrarily long session.
+7. `Agent loop reports a max-tokens truncation via onFinish`: a provider returning `finishReason: 'length'`. Assert `onFinish` receives it and that the `assistant/message` event carries it too — a truncated answer must be visible in the log, not silently mistaken for a complete one.
+
+```js
+test('TokenMeter estimates text at four chars per token plus per-message overhead', () => {
+  const meter = new TokenMeterRuntime()
+
+  assert.equal(meter.estimateText(''), 0)
+  assert.equal(meter.estimateText('abcd'), 1)
+  assert.equal(meter.estimateText('abcde'), 2)
+
+  const plain = meter.estimateMessage({ role: 'user', content: 'x'.repeat(40) })
+  assert.equal(plain, 10 + 4)
+
+  const withTools = meter.estimateMessage({
+    role: 'assistant',
+    content: null,
+    tool_calls: [{ id: 'c1', function: { name: 'bash', arguments: '{"command":"ls"}' } }],
+  })
+  assert.ok(withTools > 4, 'tool_calls contribute to the estimate')
+
+  const total = meter.measure([
+    { role: 'user', content: 'hello' },
+    { role: 'assistant', content: 'hi there' },
+  ])
+  assert.equal(
+    total,
+    meter.estimateMessage({ role: 'user', content: 'hello' }) +
+      meter.estimateMessage({ role: 'assistant', content: 'hi there' }),
+  )
+})
+
+test('Compaction rewrites the projection, not the log, and keeps recent events verbatim', async () => {
+  const sessions = new SessionRuntime()
+  const s = sessions.create()
+
+  sessions.append(s.id, 'user/message', { content: 'turn 1' })
+  sessions.append(s.id, 'assistant/message', { content: 'answer 1' })
+  sessions.append(s.id, 'user/message', { content: 'turn 2' })
+  sessions.append(s.id, 'assistant/message', { content: 'answer 2' })
+  sessions.append(s.id, 'user/message', { content: 'turn 3' })
+
+  const compaction = new CompactionRuntime({
+    sessions,
+    tokenMeter: new TokenMeterRuntime(),
+    summarize: async transcript => `summary of: ${transcript.split('\n')[0]}`,
+  })
+
+  const result = await compaction.compact(s.id, { keepEvents: 2 })
+  assert.equal(result.upToSeq, 4)
+
+  const messages = sessions.deriveMessages(s.id)
+  assert.equal(messages.length, 3)
+  assert.equal(messages[0].role, 'user')
+  assert.match(messages[0].content, /summary of: user: turn 1/)
+  assert.equal(messages[1].content, 'answer 2')
+  assert.equal(messages[2].content, 'turn 3')
+
+  // The log is append-only: every original event is still there.
+  const compactEvents = sessions.get(s.id).events.filter(e => e.type === 'session/compact')
+  assert.equal(compactEvents.length, 1)
+  assert.equal(sessions.get(s.id).events.filter(e => e.type === 'user/message').length, 3)
+})
+
+test('Compaction cuts only at valid boundaries so tool pairs stay intact', async () => {
+  const sessions = new SessionRuntime()
+  const s = sessions.create()
+
+  sessions.append(s.id, 'user/message', { content: 'check the clock' })
+  sessions.append(s.id, 'assistant/tool_calls', {
+    toolCalls: [{ id: 'c1', name: 'clock', arguments: {} }],
+  })
+  sessions.append(s.id, 'tool/result', { toolCallId: 'c1', name: 'clock', content: '12:00' })
+  sessions.append(s.id, 'assistant/message', { content: 'it is noon' })
+  sessions.append(s.id, 'user/message', { content: 'thanks' })
+  sessions.append(s.id, 'assistant/message', { content: 'you are welcome' })
+
+  const compaction = new CompactionRuntime({
+    sessions,
+    tokenMeter: new TokenMeterRuntime(),
+    summarize: async () => 'old clock business',
+  })
+
+  // keepEvents lands the cut on the tool pair boundary first; the prefix
+  // must grow until the pair folds into the summary instead of splitting.
+  const result = await compaction.compact(s.id, { keepEvents: 2 })
+  assert.ok(result, 'the first turn is compactable')
+
+  const messages = sessions.deriveMessages(s.id)
+  assert.equal(messages.length, 3)
+  assert.equal(messages[0].content, 'old clock business')
+  assert.equal(messages[1].content, 'thanks')
+  assert.equal(messages[2].content, 'you are welcome')
+})
+
+test('Stacked compactions keep only the newest summary', async () => {
+  const sessions = new SessionRuntime()
+  const s = sessions.create()
+
+  for (let i = 1; i <= 4; i++) {
+    sessions.append(s.id, 'user/message', { content: `turn ${i}` })
+    sessions.append(s.id, 'assistant/message', { content: `answer ${i}` })
+  }
+
+  const compaction = new CompactionRuntime({
+    sessions,
+    tokenMeter: new TokenMeterRuntime(),
+    summarize: async transcript => `S(${transcript.length})`,
+  })
+
+  await compaction.compact(s.id, { keepEvents: 4 })
+  await compaction.compact(s.id, { keepEvents: 4 })
+
+  const messages = sessions.deriveMessages(s.id)
+  const summaries = messages.filter(m => m.content.startsWith('S('))
+  assert.equal(summaries.length, 1, 'older summaries are superseded')
+  // 4 turns total; each compaction keeps turns 3-4 verbatim.
+  assert.deepEqual(
+    messages.map(m => m.content),
+    [summaries[0].content, 'turn 3', 'answer 3', 'turn 4', 'answer 4'],
+  )
+})
+
+test('maybeCompact triggers only past the threshold', async () => {
+  const sessions = new SessionRuntime()
+  const s = sessions.create()
+
+  sessions.append(s.id, 'user/message', { content: 'hi' })
+  sessions.append(s.id, 'user/message', { content: 'again' })
+
+  const compaction = new CompactionRuntime({
+    sessions,
+    tokenMeter: new TokenMeterRuntime(),
+    summarize: async () => 'summary',
+    threshold: 1,
+  })
+
+  // Threshold 1 token: two user turns already exceed it, but compact()
+  // still refuses — fewer message events than the default keepEvents floor.
+  assert.equal(compaction.shouldCompact(s.id), true)
+  assert.equal(await compaction.maybeCompact(s.id), null)
+})
+
+test('Agent loop compacts a long session automatically at the step boundary', async () => {
+  const sessions = new SessionRuntime()
+  const systemPrompt = new SystemPromptRuntime()
+  const tools = new ToolRuntime()
+  const llm = new LlmRuntime()
+  const agents = new AgentRuntime()
+  const tokenMeter = new TokenMeterRuntime()
+
+  tools.register({
+    name: 'tick',
+    description: 'tick',
+    parameters: { type: 'object', properties: {} },
+    execute: async () => 'x'.repeat(400),
+  })
+
+  let modelCalls = 0
+  let summaries = 0
+  llm.register(
+    'mock',
+    {
+      models: ['chatty'],
+      async chat() {
+        modelCalls += 1
+        if (modelCalls <= 6) {
+          return {
+            toolCalls: [{ id: `c${modelCalls}`, name: 'tick', arguments: {} }],
+          }
+        }
+        return { content: 'done', toolCalls: [] }
+      },
+    },
+    { defaultModel: 'chatty' },
+  )
+
+  const compaction = new CompactionRuntime({
+    sessions,
+    tokenMeter,
+    summarize: async () => {
+      summaries += 1
+      return 'compacted summary'
+    },
+    // Tiny threshold and keepEvents so the loop must compact mid-run.
+    threshold: 10,
+    keepEvents: 4,
+  })
+
+  const s = sessions.create()
+  const loop = new AgentLoopRuntime({
+    sessions,
+    systemPrompt,
+    tools,
+    llm,
+    compaction,
+  })
+  const agent = agents.create({ sessionId: s.id, model: 'mock/chatty', loop })
+
+  const answer = await agent.send('keep ticking')
+  assert.equal(answer, 'done')
+  assert.ok(summaries > 0, 'compaction ran during the loop')
+
+  const finalMessages = sessions.deriveMessages(s.id)
+  assert.equal(finalMessages[0].content, 'compacted summary')
+  const compactEvents = sessions.get(s.id).events.filter(e => e.type === 'session/compact')
+  assert.ok(compactEvents.length >= 1)
+})
+
+test('Agent loop reports a max-tokens truncation via onFinish', async () => {
+  const sessions = new SessionRuntime()
+  const systemPrompt = new SystemPromptRuntime()
+  const tools = new ToolRuntime()
+  const llm = new LlmRuntime()
+  const agents = new AgentRuntime()
+
+  llm.register(
+    'mock',
+    {
+      models: ['loquacious'],
+      async chat() {
+        return { content: 'cut off mid-senten', toolCalls: [], finishReason: 'length' }
+      },
+    },
+    { defaultModel: 'loquacious' },
+  )
+
+  const s = sessions.create()
+  const loop = new AgentLoopRuntime({ sessions, systemPrompt, tools, llm })
+  const agent = agents.create({ sessionId: s.id, model: 'mock/loquacious', loop })
+
+  const finishes = []
+  const answer = await agent.send('tell me a story', {
+    onFinish: finish => finishes.push(finish),
+  })
+
+  assert.equal(answer, 'cut off mid-senten')
+  assert.deepEqual(finishes, [{ finishReason: 'length' }])
+
+  const events = sessions.get(s.id).events
+  const last = events.at(-1)
+  assert.equal(last.type, 'assistant/message')
+  assert.equal(last.data.finishReason, 'length')
+})
+```
+
+When done, `pnpm test` totals **29**.
 
 ### What stays out
 
@@ -1815,7 +2068,7 @@ CLI and MCP exist to prove these five abstractions are sufficient. So do the san
 11. Esc cancels an in-flight agent run — and the session still works afterwards: send another message and it goes through, because every `tool_call` in the log has a matching `tool/result`
 12. `pnpm test` and `pnpm check` fully green; `test/core.test.js` has **13** tests
 
-### Supplement (matches this repo's 22)
+### Supplement (22 so far)
 
 13. File tools reject `../etc/passwd`; the `..hidden` filename inside the workspace is not falsely killed; a symlink inside the workspace pointing out of it is rejected too — both for a file that exists and for one about to be created
 14. `rm -rf src`, `curl https://example.com`, `curl ... | sh` are denied; `rm file.txt` is allowed
@@ -1825,15 +2078,15 @@ CLI and MCP exist to prove these five abstractions are sufficient. So do the san
 18. `test/integration.test.js` boots the real plugin stack on Cordis and runs a full turn; the external plugin loader tolerates an optional failure and rejects a required one
 19. `pnpm test` totals 22 (20 in `test/core.test.js` + 2 in `test/integration.test.js`), matching this repo
 
-### Supplement 2 (matches this repo's 25)
+### Supplement 2 (matches this repo's 29)
 
-19. The meter estimates 40 chars as 10 tokens plus the per-message overhead
-20. After compaction the projection shows the summary + kept events, but the log still contains every original event
-21. A cut never splits an assistant tool_calls message from its tool results
-22. Stacked compactions show only the newest summary
-23. `maybeCompact` below the keepEvents floor returns null even past the threshold
-24. A long mock session compacts automatically at a step boundary mid-run
-25. `finish_reason: length` reaches `onFinish` and lands on the assistant/message event
+20. The meter estimates 40 chars as 10 tokens plus the per-message overhead
+21. After compaction the projection shows the summary + kept events, but the log still contains every original event
+22. A cut never splits an assistant tool_calls message from its tool results
+23. Stacked compactions show only the newest summary
+24. `maybeCompact` below the keepEvents floor returns null even past the threshold
+25. A long mock session compacts automatically at a step boundary mid-run
+26. `finish_reason: length` reaches `onFinish` and lands on the assistant/message event
 
 ---
 

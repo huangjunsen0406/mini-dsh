@@ -1270,7 +1270,7 @@ export default [
 
 想把路径闸门、Approval、`read_file` / `bash` 也写上，再做**补充篇**。那部分才把测试从 13 条补到 22 条。
 
-想把"让无限循环在长会话里活下来"的 token 计量 + compaction 也写上，再做**补充篇 2**。那部分把测试从 18 条补到 25 条。
+想把"让无限循环在长会话里活下来"的 token 计量 + compaction 也写上，再做**补充篇 2**。那部分把测试从 22 条补到 29 条。
 
 ---
 
@@ -1743,7 +1743,260 @@ test/core.test.js                # 追加 7 条测试
 
 ### 补充篇 2 测试
 
-七条：计量数学、投影不改日志、tool 对完整性、叠加压缩、阈值门控、循环中自动压缩、max-tokens 上报。写完累计 **25 条**。
+七条写进 `test/core.test.js`，标题和本仓库同名。要点：
+
+1. `TokenMeter estimates text at four chars per token plus per-message overhead`：`''` 是 0、`'abcd'` 是 1、`'abcde'` 是 2——向上取整。40 字符的消息是 `10 + 4`，tool_calls 通过它的 JSON 计入，`measure()` 恰好等于各条 `estimateMessage()` 之和。刻意只用一个固定启发式而不是提供方的分词器：计量器只回答"大概多满"，模型容量是适配器的事。
+2. `Compaction rewrites the projection, not the log, and keeps recent events verbatim`：五个消息事件、`keepEvents: 2`，断言 `upToSeq` 是 4、投影是摘要 + 保留的两条。然后断言日志里三条 `user/message` 一条不少、`session/compact` 恰好一条。最后这两句断言就是整章的论点——压缩改变的是模型看到什么，从不改变发生过什么。
+3. `Compaction cuts only at valid boundaries so tool pairs stay intact`：构造一条日志，让 tool 对正好落在 `keepEvents: 2` 想切的位置。断言压缩前缀往前扩了、把整对折进摘要，而不是从中间切开——投影里不会留下一条没有结果的 assistant tool_calls。就是这个细节让压缩敢在循环中途跑。
+4. `Stacked compactions keep only the newest summary`：四轮对话，用 `keepEvents: 4` 压两次，断言只剩一条摘要、保留的是第 3-4 轮。旧摘要并没有丢——`renderTranscript` 会把它喂进新摘要里，所以投影里只需要留最新的那条。
+5. `maybeCompact triggers only past the threshold`：`threshold: 1` 时两轮用户消息就已超阈值，`shouldCompact()` 为真，但 `maybeCompact()` 仍返回 null，因为消息事件数还不到 `keepEvents` 下限。两道独立的闸门——超预算本身不构成压缩的理由。
+6. `Agent loop compacts a long session automatically at the step boundary`：mock 连返六次 tool call 才回答，工具每次返回 400 个字符，`threshold: 10`、`keepEvents: 4`，逼压缩在跑的中途触发。断言摘要器确实跑过、投影现在以摘要开头、并且存在 `session/compact` 事件。这就是让无限循环在任意长的会话里活下来的那一步。
+7. `Agent loop reports a max-tokens truncation via onFinish`：provider 返回 `finishReason: 'length'`。断言 `onFinish` 收到了它，并且 `assistant/message` 事件上也带着它——被截断的回答必须在日志里看得见，不能被当成一条完整回答悄悄混过去。
+
+```js
+test('TokenMeter estimates text at four chars per token plus per-message overhead', () => {
+  const meter = new TokenMeterRuntime()
+
+  assert.equal(meter.estimateText(''), 0)
+  assert.equal(meter.estimateText('abcd'), 1)
+  assert.equal(meter.estimateText('abcde'), 2)
+
+  const plain = meter.estimateMessage({ role: 'user', content: 'x'.repeat(40) })
+  assert.equal(plain, 10 + 4)
+
+  const withTools = meter.estimateMessage({
+    role: 'assistant',
+    content: null,
+    tool_calls: [{ id: 'c1', function: { name: 'bash', arguments: '{"command":"ls"}' } }],
+  })
+  assert.ok(withTools > 4, 'tool_calls contribute to the estimate')
+
+  const total = meter.measure([
+    { role: 'user', content: 'hello' },
+    { role: 'assistant', content: 'hi there' },
+  ])
+  assert.equal(
+    total,
+    meter.estimateMessage({ role: 'user', content: 'hello' }) +
+      meter.estimateMessage({ role: 'assistant', content: 'hi there' }),
+  )
+})
+
+test('Compaction rewrites the projection, not the log, and keeps recent events verbatim', async () => {
+  const sessions = new SessionRuntime()
+  const s = sessions.create()
+
+  sessions.append(s.id, 'user/message', { content: 'turn 1' })
+  sessions.append(s.id, 'assistant/message', { content: 'answer 1' })
+  sessions.append(s.id, 'user/message', { content: 'turn 2' })
+  sessions.append(s.id, 'assistant/message', { content: 'answer 2' })
+  sessions.append(s.id, 'user/message', { content: 'turn 3' })
+
+  const compaction = new CompactionRuntime({
+    sessions,
+    tokenMeter: new TokenMeterRuntime(),
+    summarize: async transcript => `summary of: ${transcript.split('\n')[0]}`,
+  })
+
+  const result = await compaction.compact(s.id, { keepEvents: 2 })
+  assert.equal(result.upToSeq, 4)
+
+  const messages = sessions.deriveMessages(s.id)
+  assert.equal(messages.length, 3)
+  assert.equal(messages[0].role, 'user')
+  assert.match(messages[0].content, /summary of: user: turn 1/)
+  assert.equal(messages[1].content, 'answer 2')
+  assert.equal(messages[2].content, 'turn 3')
+
+  // The log is append-only: every original event is still there.
+  const compactEvents = sessions.get(s.id).events.filter(e => e.type === 'session/compact')
+  assert.equal(compactEvents.length, 1)
+  assert.equal(sessions.get(s.id).events.filter(e => e.type === 'user/message').length, 3)
+})
+
+test('Compaction cuts only at valid boundaries so tool pairs stay intact', async () => {
+  const sessions = new SessionRuntime()
+  const s = sessions.create()
+
+  sessions.append(s.id, 'user/message', { content: 'check the clock' })
+  sessions.append(s.id, 'assistant/tool_calls', {
+    toolCalls: [{ id: 'c1', name: 'clock', arguments: {} }],
+  })
+  sessions.append(s.id, 'tool/result', { toolCallId: 'c1', name: 'clock', content: '12:00' })
+  sessions.append(s.id, 'assistant/message', { content: 'it is noon' })
+  sessions.append(s.id, 'user/message', { content: 'thanks' })
+  sessions.append(s.id, 'assistant/message', { content: 'you are welcome' })
+
+  const compaction = new CompactionRuntime({
+    sessions,
+    tokenMeter: new TokenMeterRuntime(),
+    summarize: async () => 'old clock business',
+  })
+
+  // keepEvents lands the cut on the tool pair boundary first; the prefix
+  // must grow until the pair folds into the summary instead of splitting.
+  const result = await compaction.compact(s.id, { keepEvents: 2 })
+  assert.ok(result, 'the first turn is compactable')
+
+  const messages = sessions.deriveMessages(s.id)
+  assert.equal(messages.length, 3)
+  assert.equal(messages[0].content, 'old clock business')
+  assert.equal(messages[1].content, 'thanks')
+  assert.equal(messages[2].content, 'you are welcome')
+})
+
+test('Stacked compactions keep only the newest summary', async () => {
+  const sessions = new SessionRuntime()
+  const s = sessions.create()
+
+  for (let i = 1; i <= 4; i++) {
+    sessions.append(s.id, 'user/message', { content: `turn ${i}` })
+    sessions.append(s.id, 'assistant/message', { content: `answer ${i}` })
+  }
+
+  const compaction = new CompactionRuntime({
+    sessions,
+    tokenMeter: new TokenMeterRuntime(),
+    summarize: async transcript => `S(${transcript.length})`,
+  })
+
+  await compaction.compact(s.id, { keepEvents: 4 })
+  await compaction.compact(s.id, { keepEvents: 4 })
+
+  const messages = sessions.deriveMessages(s.id)
+  const summaries = messages.filter(m => m.content.startsWith('S('))
+  assert.equal(summaries.length, 1, 'older summaries are superseded')
+  // 4 turns total; each compaction keeps turns 3-4 verbatim.
+  assert.deepEqual(
+    messages.map(m => m.content),
+    [summaries[0].content, 'turn 3', 'answer 3', 'turn 4', 'answer 4'],
+  )
+})
+
+test('maybeCompact triggers only past the threshold', async () => {
+  const sessions = new SessionRuntime()
+  const s = sessions.create()
+
+  sessions.append(s.id, 'user/message', { content: 'hi' })
+  sessions.append(s.id, 'user/message', { content: 'again' })
+
+  const compaction = new CompactionRuntime({
+    sessions,
+    tokenMeter: new TokenMeterRuntime(),
+    summarize: async () => 'summary',
+    threshold: 1,
+  })
+
+  // Threshold 1 token: two user turns already exceed it, but compact()
+  // still refuses — fewer message events than the default keepEvents floor.
+  assert.equal(compaction.shouldCompact(s.id), true)
+  assert.equal(await compaction.maybeCompact(s.id), null)
+})
+
+test('Agent loop compacts a long session automatically at the step boundary', async () => {
+  const sessions = new SessionRuntime()
+  const systemPrompt = new SystemPromptRuntime()
+  const tools = new ToolRuntime()
+  const llm = new LlmRuntime()
+  const agents = new AgentRuntime()
+  const tokenMeter = new TokenMeterRuntime()
+
+  tools.register({
+    name: 'tick',
+    description: 'tick',
+    parameters: { type: 'object', properties: {} },
+    execute: async () => 'x'.repeat(400),
+  })
+
+  let modelCalls = 0
+  let summaries = 0
+  llm.register(
+    'mock',
+    {
+      models: ['chatty'],
+      async chat() {
+        modelCalls += 1
+        if (modelCalls <= 6) {
+          return {
+            toolCalls: [{ id: `c${modelCalls}`, name: 'tick', arguments: {} }],
+          }
+        }
+        return { content: 'done', toolCalls: [] }
+      },
+    },
+    { defaultModel: 'chatty' },
+  )
+
+  const compaction = new CompactionRuntime({
+    sessions,
+    tokenMeter,
+    summarize: async () => {
+      summaries += 1
+      return 'compacted summary'
+    },
+    // Tiny threshold and keepEvents so the loop must compact mid-run.
+    threshold: 10,
+    keepEvents: 4,
+  })
+
+  const s = sessions.create()
+  const loop = new AgentLoopRuntime({
+    sessions,
+    systemPrompt,
+    tools,
+    llm,
+    compaction,
+  })
+  const agent = agents.create({ sessionId: s.id, model: 'mock/chatty', loop })
+
+  const answer = await agent.send('keep ticking')
+  assert.equal(answer, 'done')
+  assert.ok(summaries > 0, 'compaction ran during the loop')
+
+  const finalMessages = sessions.deriveMessages(s.id)
+  assert.equal(finalMessages[0].content, 'compacted summary')
+  const compactEvents = sessions.get(s.id).events.filter(e => e.type === 'session/compact')
+  assert.ok(compactEvents.length >= 1)
+})
+
+test('Agent loop reports a max-tokens truncation via onFinish', async () => {
+  const sessions = new SessionRuntime()
+  const systemPrompt = new SystemPromptRuntime()
+  const tools = new ToolRuntime()
+  const llm = new LlmRuntime()
+  const agents = new AgentRuntime()
+
+  llm.register(
+    'mock',
+    {
+      models: ['loquacious'],
+      async chat() {
+        return { content: 'cut off mid-senten', toolCalls: [], finishReason: 'length' }
+      },
+    },
+    { defaultModel: 'loquacious' },
+  )
+
+  const s = sessions.create()
+  const loop = new AgentLoopRuntime({ sessions, systemPrompt, tools, llm })
+  const agent = agents.create({ sessionId: s.id, model: 'mock/loquacious', loop })
+
+  const finishes = []
+  const answer = await agent.send('tell me a story', {
+    onFinish: finish => finishes.push(finish),
+  })
+
+  assert.equal(answer, 'cut off mid-senten')
+  assert.deepEqual(finishes, [{ finishReason: 'length' }])
+
+  const events = sessions.get(s.id).events
+  const last = events.at(-1)
+  assert.equal(last.type, 'assistant/message')
+  assert.equal(last.data.finishReason, 'length')
+})
+```
+
+写完 `pnpm test` 一共 **29 条**。
 
 ### 刻意不做的
 
@@ -1815,7 +2068,7 @@ CLI、MCP 是为了证明这五个抽象够用。沙箱 / Bash / 文件工具也
 11. Esc 能取消一轮进行中的 agent run——而且取消之后会话还能继续用：再发一条消息能正常走通，因为日志里每个 `tool_call` 都有配对的 `tool/result`
 12. `pnpm test` 和 `pnpm check` 全绿，`test/core.test.js` 一共 **13 条**
 
-### 补充篇（对齐本仓库 22 条）
+### 补充篇（累计 22 条）
 
 13. 文件工具写 `../etc/passwd` 被挡住；workspace 内 `..hidden` 文件名不被误杀；workspace 内指向外面的软链同样被挡——已存在的文件和即将新建的文件都要挡住
 14. `rm -rf src`、`curl https://example.com`、`curl ... | sh` 被沙箱拒绝；`rm file.txt` 放行
@@ -1825,15 +2078,15 @@ CLI、MCP 是为了证明这五个抽象够用。沙箱 / Bash / 文件工具也
 18. `test/integration.test.js` 能在真实 Cordis 上把插件栈启起来并跑完一轮；外部插件加载器容忍 optional 失败、拒绝 required 失败
 19. `pnpm test` 一共 22 条（`test/core.test.js` 20 条 + `test/integration.test.js` 2 条），和本仓库一致
 
-### 补充篇 2（对齐本仓库 25 条）
+### 补充篇 2（对齐本仓库 29 条）
 
-19. 计量把 40 个字符估成 10 token 加每条消息开销
-20. 压缩后投影显示摘要 + 保留事件，但日志里原始事件一条不少
-21. 切点绝不把 assistant tool_calls 和它的 tool results 拆开
-22. 叠加压缩只显示最新一条摘要
-23. 低于 keepEvents 下限时，即使超过阈值 `maybeCompact` 也返回 null
-24. 长会话 mock 场景在步骤边界自动压缩
-25. `finish_reason: length` 到达 `onFinish`，并落在 assistant/message 事件上
+20. 计量把 40 个字符估成 10 token 加每条消息开销
+21. 压缩后投影显示摘要 + 保留事件，但日志里原始事件一条不少
+22. 切点绝不把 assistant tool_calls 和它的 tool results 拆开
+23. 叠加压缩只显示最新一条摘要
+24. 低于 keepEvents 下限时，即使超过阈值 `maybeCompact` 也返回 null
+25. 长会话 mock 场景在步骤边界自动压缩
+26. `finish_reason: length` 到达 `onFinish`，并落在 assistant/message 事件上
 
 ---
 
