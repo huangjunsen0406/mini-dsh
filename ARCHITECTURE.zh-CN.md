@@ -17,6 +17,8 @@ ctx.tools
 ctx.llm
 ctx.agents
 ctx.agentLoop
+ctx.tokenMeter
+ctx.compaction
 ctx.sandbox
 ```
 
@@ -54,10 +56,24 @@ LLM
 SessionEvent[] = 事实
 messages       = 给模型看的投影视图
 
-类型：session/start · user/message · assistant/message · assistant/tool_calls · tool/result
+类型：session/start · user/message · assistant/message · assistant/tool_calls · tool/result · session/compact
 ```
 
 这样 Tool Call、Tool Result、reasoning_content 都可以统一进入同一条历史。
+
+## 为什么 Compaction 也只是一条事件
+
+```text
+tokenMeter（4 字符 ≈ 1 token，固定启发式）
+    ↓
+估算值 >= 阈值（默认 24000）
+    ↓
+SessionEvent: session/compact { summary, upToSeq }   ← append-only，从不改写历史
+    ↓
+deriveMessages()：upToSeq 之前的事件投影成一条摘要消息
+```
+
+切点永远不会把 assistant tool_calls 和它的 tool results 拆开。这正是无限 Agent Loop 在长会话里活得下去的原因——官方 DSH 面对"上下文满了"也是同一个答案：把历史折叠成摘要，继续循环。而不是数步数。
 
 ## 为什么 MCP 能直接接进来
 
@@ -79,7 +95,7 @@ AgentLoop 不需要写任何 `if (mcp)` 特殊分支。
 
 ## 学习版刻意没有什么
 
-这里故意不实现完整 DSH 的产品级子系统，例如 compaction、budget、内核级 sandbox、scheduler、telemetry、完整 settings/credentials、TUI/Web 等。
+这里故意不实现完整 DSH 的产品级子系统，例如 budget、内核级 sandbox、scheduler、telemetry、完整 settings/credentials、TUI/Web 等。Compaction 只保留了最小形态：单一阈值、一条摘要事件；没有 pressure/overflow 双触发、没有 replay-aware 精确计量、没有 tool-pairing 再平衡。
 
 学习版只加了一层**应用层沙箱**，而它真正值得学的地方是每道闸门各自失效在哪里：
 

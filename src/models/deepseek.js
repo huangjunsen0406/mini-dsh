@@ -54,12 +54,18 @@ export function apply(ctx, config = {}) {
 
             let content = ''
             let reasoningContent = ''
+            let finishReason = null
             const toolCallsMap = new Map()
 
             for await (const event of parseSSE(response)) {
                 const choice = event?.choices?.[0]
                 if (!choice) continue
                 const delta = choice.delta ?? {}
+
+                // 'stop' ends a turn, 'length' means the output hit max_tokens.
+                if (choice.finish_reason) {
+                    finishReason = choice.finish_reason
+                }
 
                 if (delta.reasoning_content) {
                     reasoningContent += delta.reasoning_content
@@ -84,6 +90,7 @@ export function apply(ctx, config = {}) {
                 content,
                 reasoningContent: reasoningContent || undefined,
                 toolCalls,
+                finishReason,
             }
         },
     }

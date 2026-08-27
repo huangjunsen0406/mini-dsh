@@ -5,9 +5,11 @@ import path from 'node:path'
 import test from 'node:test'
 import { AgentLoopRuntime } from '../src/core/agent-loop-runtime.js'
 import { AgentRuntime } from '../src/core/agent-runtime.js'
+import { CompactionRuntime } from '../src/core/compaction-runtime.js'
 import { LlmRuntime } from '../src/core/llm-runtime.js'
 import { SessionRuntime } from '../src/core/session-runtime.js'
 import { SystemPromptRuntime } from '../src/core/system-prompt-runtime.js'
+import { TokenMeterRuntime } from '../src/core/token-meter-runtime.js'
 import { ToolRuntime } from '../src/core/tool-runtime.js'
 
 test('Session derives tool-call history from the event log and keeps reasoning_content', () => {
@@ -595,4 +597,245 @@ test('glob matches both substrings and * / ** wildcards', async () => {
     assert.equal(matchFilePattern('docs/guide.md', '*.md'), true)
     assert.equal(matchFilePattern('src/tools/bash.js', '**/*.js'), true)
     assert.equal(matchFilePattern('README.md', '**/*.js'), false)
+})
+
+test('TokenMeter estimates text at four chars per token plus per-message overhead', () => {
+    const meter = new TokenMeterRuntime()
+
+    assert.equal(meter.estimateText(''), 0)
+    assert.equal(meter.estimateText('abcd'), 1)
+    assert.equal(meter.estimateText('abcde'), 2)
+
+    const plain = meter.estimateMessage({ role: 'user', content: 'x'.repeat(40) })
+    assert.equal(plain, 10 + 4)
+
+    const withTools = meter.estimateMessage({
+        role: 'assistant',
+        content: null,
+        tool_calls: [{ id: 'c1', function: { name: 'bash', arguments: '{"command":"ls"}' } }],
+    })
+    assert.ok(withTools > 4, 'tool_calls contribute to the estimate')
+
+    const total = meter.measure([
+        { role: 'user', content: 'hello' },
+        { role: 'assistant', content: 'hi there' },
+    ])
+    assert.equal(
+        total,
+        meter.estimateMessage({ role: 'user', content: 'hello' }) +
+            meter.estimateMessage({ role: 'assistant', content: 'hi there' }),
+    )
+})
+
+test('Compaction rewrites the projection, not the log, and keeps recent events verbatim', async () => {
+    const sessions = new SessionRuntime()
+    const s = sessions.create()
+
+    sessions.append(s.id, 'user/message', { content: 'turn 1' })
+    sessions.append(s.id, 'assistant/message', { content: 'answer 1' })
+    sessions.append(s.id, 'user/message', { content: 'turn 2' })
+    sessions.append(s.id, 'assistant/message', { content: 'answer 2' })
+    sessions.append(s.id, 'user/message', { content: 'turn 3' })
+
+    const compaction = new CompactionRuntime({
+        sessions,
+        tokenMeter: new TokenMeterRuntime(),
+        summarize: async (transcript) => `summary of: ${transcript.split('\n')[0]}`,
+    })
+
+    const result = await compaction.compact(s.id, { keepEvents: 2 })
+    assert.equal(result.upToSeq, 4)
+
+    const messages = sessions.deriveMessages(s.id)
+    assert.equal(messages.length, 3)
+    assert.equal(messages[0].role, 'user')
+    assert.match(messages[0].content, /summary of: user: turn 1/)
+    assert.equal(messages[1].content, 'answer 2')
+    assert.equal(messages[2].content, 'turn 3')
+
+    // The log is append-only: every original event is still there.
+    const compactEvents = sessions.get(s.id).events.filter((e) => e.type === 'session/compact')
+    assert.equal(compactEvents.length, 1)
+    assert.equal(sessions.get(s.id).events.filter((e) => e.type === 'user/message').length, 3)
+})
+
+test('Compaction cuts only at valid boundaries so tool pairs stay intact', async () => {
+    const sessions = new SessionRuntime()
+    const s = sessions.create()
+
+    sessions.append(s.id, 'user/message', { content: 'check the clock' })
+    sessions.append(s.id, 'assistant/tool_calls', {
+        toolCalls: [{ id: 'c1', name: 'clock', arguments: {} }],
+    })
+    sessions.append(s.id, 'tool/result', { toolCallId: 'c1', name: 'clock', content: '12:00' })
+    sessions.append(s.id, 'assistant/message', { content: 'it is noon' })
+    sessions.append(s.id, 'user/message', { content: 'thanks' })
+    sessions.append(s.id, 'assistant/message', { content: 'you are welcome' })
+
+    const compaction = new CompactionRuntime({
+        sessions,
+        tokenMeter: new TokenMeterRuntime(),
+        summarize: async () => 'old clock business',
+    })
+
+    // keepEvents lands the cut on the tool pair boundary first; the prefix
+    // must grow until the pair folds into the summary instead of splitting.
+    const result = await compaction.compact(s.id, { keepEvents: 2 })
+    assert.ok(result, 'the first turn is compactable')
+
+    const messages = sessions.deriveMessages(s.id)
+    assert.equal(messages.length, 3)
+    assert.equal(messages[0].content, 'old clock business')
+    assert.equal(messages[1].content, 'thanks')
+    assert.equal(messages[2].content, 'you are welcome')
+})
+
+test('Stacked compactions keep only the newest summary', async () => {
+    const sessions = new SessionRuntime()
+    const s = sessions.create()
+
+    for (let i = 1; i <= 4; i++) {
+        sessions.append(s.id, 'user/message', { content: `turn ${i}` })
+        sessions.append(s.id, 'assistant/message', { content: `answer ${i}` })
+    }
+
+    const compaction = new CompactionRuntime({
+        sessions,
+        tokenMeter: new TokenMeterRuntime(),
+        summarize: async (transcript) => `S(${transcript.length})`,
+    })
+
+    await compaction.compact(s.id, { keepEvents: 4 })
+    await compaction.compact(s.id, { keepEvents: 4 })
+
+    const messages = sessions.deriveMessages(s.id)
+    const summaries = messages.filter((m) => m.content.startsWith('S('))
+    assert.equal(summaries.length, 1, 'older summaries are superseded')
+    // 4 turns total; each compaction keeps turns 3-4 verbatim.
+    assert.deepEqual(
+        messages.map((m) => m.content),
+        [summaries[0].content, 'turn 3', 'answer 3', 'turn 4', 'answer 4'],
+    )
+})
+
+test('maybeCompact triggers only past the threshold', async () => {
+    const sessions = new SessionRuntime()
+    const s = sessions.create()
+
+    sessions.append(s.id, 'user/message', { content: 'hi' })
+    sessions.append(s.id, 'user/message', { content: 'again' })
+
+    const compaction = new CompactionRuntime({
+        sessions,
+        tokenMeter: new TokenMeterRuntime(),
+        summarize: async () => 'summary',
+        threshold: 1,
+    })
+
+    // Threshold 1 token: two user turns already exceed it, but compact()
+    // still refuses — fewer message events than the default keepEvents floor.
+    assert.equal(compaction.shouldCompact(s.id), true)
+    assert.equal(await compaction.maybeCompact(s.id), null)
+})
+
+test('Agent loop compacts a long session automatically at the step boundary', async () => {
+    const sessions = new SessionRuntime()
+    const systemPrompt = new SystemPromptRuntime()
+    const tools = new ToolRuntime()
+    const llm = new LlmRuntime()
+    const agents = new AgentRuntime()
+    const tokenMeter = new TokenMeterRuntime()
+
+    tools.register({
+        name: 'tick',
+        description: 'tick',
+        parameters: { type: 'object', properties: {} },
+        execute: async () => 'x'.repeat(400),
+    })
+
+    let modelCalls = 0
+    let summaries = 0
+    llm.register(
+        'mock',
+        {
+            models: ['chatty'],
+            async chat() {
+                modelCalls += 1
+                if (modelCalls <= 6) {
+                    return {
+                        toolCalls: [{ id: `c${modelCalls}`, name: 'tick', arguments: {} }],
+                    }
+                }
+                return { content: 'done', toolCalls: [] }
+            },
+        },
+        { defaultModel: 'chatty' },
+    )
+
+    const compaction = new CompactionRuntime({
+        sessions,
+        tokenMeter,
+        summarize: async () => {
+            summaries += 1
+            return 'compacted summary'
+        },
+        // Tiny threshold and keepEvents so the loop must compact mid-run.
+        threshold: 10,
+        keepEvents: 4,
+    })
+
+    const s = sessions.create()
+    const loop = new AgentLoopRuntime({
+        sessions,
+        systemPrompt,
+        tools,
+        llm,
+        compaction,
+    })
+    const agent = agents.create({ sessionId: s.id, model: 'mock/chatty', loop })
+
+    const answer = await agent.send('keep ticking')
+    assert.equal(answer, 'done')
+    assert.ok(summaries > 0, 'compaction ran during the loop')
+
+    const finalMessages = sessions.deriveMessages(s.id)
+    assert.equal(finalMessages[0].content, 'compacted summary')
+    const compactEvents = sessions.get(s.id).events.filter((e) => e.type === 'session/compact')
+    assert.ok(compactEvents.length >= 1)
+})
+
+test('Agent loop reports a max-tokens truncation via onFinish', async () => {
+    const sessions = new SessionRuntime()
+    const systemPrompt = new SystemPromptRuntime()
+    const tools = new ToolRuntime()
+    const llm = new LlmRuntime()
+    const agents = new AgentRuntime()
+
+    llm.register(
+        'mock',
+        {
+            models: ['loquacious'],
+            async chat() {
+                return { content: 'cut off mid-senten', toolCalls: [], finishReason: 'length' }
+            },
+        },
+        { defaultModel: 'loquacious' },
+    )
+
+    const s = sessions.create()
+    const loop = new AgentLoopRuntime({ sessions, systemPrompt, tools, llm })
+    const agent = agents.create({ sessionId: s.id, model: 'mock/loquacious', loop })
+
+    const finishes = []
+    const answer = await agent.send('tell me a story', {
+        onFinish: (finish) => finishes.push(finish),
+    })
+
+    assert.equal(answer, 'cut off mid-senten')
+    assert.deepEqual(finishes, [{ finishReason: 'length' }])
+
+    const events = sessions.get(s.id).events
+    const last = events.at(-1)
+    assert.equal(last.type, 'assistant/message')
+    assert.equal(last.data.finishReason, 'length')
 })

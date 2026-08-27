@@ -1270,6 +1270,8 @@ export default [
 
 想把路径闸门、Approval、`read_file` / `bash` 也写上，再做**补充篇**。那部分才把测试从 13 条补到 22 条。
 
+想把"让无限循环在长会话里活下来"的 token 计量 + compaction 也写上，再做**补充篇 2**。那部分把测试从 18 条补到 25 条。
+
 ---
 
 ## 补充篇：真工具 + 应用层沙箱
@@ -1697,6 +1699,58 @@ await root.plugin(cli, {
 
 ---
 
+## 补充篇 2：token 计量 + compaction
+
+补充篇做完再来。无限 `while (true)` 循环有个真实的问题：长会话里上下文窗口会满，API 开始报错。官方 DSH 的答案是 compaction——把旧历史折叠成摘要，继续循环，而不是数步数。本补充篇用约 150 行重建这个答案。
+
+### 要写的文件
+
+```text
+src/core/token-meter-runtime.js
+src/plugins/token-meter.js
+src/core/compaction-runtime.js
+src/plugins/compaction.js
+src/plugins/agent-loop.js        # inject compaction；每个步骤边界调用 maybeCompact
+src/core/agent-loop-runtime.js   # 可选 compaction + onFinish 上报 finish_reason
+src/plugins/cli.js               # /usage + /compact + 截断提示
+src/models/deepseek.js           # 从 SSE 流里采集 finish_reason
+src/index.js
+test/core.test.js                # 追加 7 条测试
+```
+
+### 1. TokenMeterRuntime
+
+无状态、单一固定启发式——和官方 token-meter 同一个取舍：**4 字符 ≈ 1 token，再加每条消息少量结构开销**（默认 4）。不做精确 tokenizer、没有配置项。`estimateText` / `estimateMessage`（content + reasoning_content + tool_calls JSON）/ `measure(messages)`。
+
+### 2. CompactionRuntime
+
+唯一重要的规则：**日志永远 append-only**。压缩只是追加一条 `session/compact { summary, upToSeq }` 事件；`deriveMessages()` 把 upToSeq 之前的事件投影成一条摘要消息。日志从不被改写——"模型可见即已记录"在压缩后依然成立。
+
+两条必须做对的不变式：
+
+- **切点绝不拆散 tool 调用对。** 消息事件（user/message、assistant/*）是合法切点；tool/result 不是。目标切点落在 tool/result 上时，把压缩前缀往前扩，直到整个调用对都折叠进摘要。
+- **最新压缩胜出。** 它的转录会把更早的摘要带在前面，所以 `deriveMessages()` 只应用最大的 upToSeq，永远不会出现两条摘要。
+
+`compact(sessionId, { keepEvents = 20 })` 原样保留最近 20 条消息事件，其余摘要。`maybeCompact` 检查 `tokenMeter.measure(deriveMessages(id)) >= threshold`（默认 24000，用 `MINI_DSH_COMPACT_AT` 覆盖）。summarizer 是注入的：插件层直连 `ctx.llm.chat`——不走 Agent Loop、不往会话日志追加用量，和官方 compaction 直连 `llm.stream` 一模一样。
+
+### 3. 接进循环
+
+每个步骤开头、组装 system prompt 之前：`await this.compaction?.maybeCompact(sessionId, { signal })`。可选依赖——runtime 测试构造 `AgentLoopRuntime` 时不传它也照常工作。
+
+### 4. finish_reason: length
+
+在 DeepSeek SSE 循环里采集 `choice.finish_reason`，作为 `finishReason` 返回。轮次结束且没有 tool calls 时，把它存进 `assistant/message` 事件，并通过新的可选回调 `onFinish({ finishReason })` 上报——CLI 打印 `[truncated: output hit max tokens]`。注意这是单步输出上限，**不是** token 预算：循环该继续还继续。
+
+### 补充篇 2 测试
+
+七条：计量数学、投影不改日志、tool 对完整性、叠加压缩、阈值门控、循环中自动压缩、max-tokens 上报。写完累计 **25 条**。
+
+### 刻意不做的
+
+pressure/overflow 双触发、replay-aware 精确计量（提供方用量锚点）、tool-pairing 再平衡、token/cost 预算、步数门控。官方 harness 同样没有最后两样——不信自己去 grep。
+
+---
+
 ## 每天怎么对照本仓库
 
 | 你写到哪 | 对照这些文件 | 先别看 |
@@ -1710,6 +1764,7 @@ await root.plugin(cli, {
 | 第 6 天 MCP | `external-plugins.js` `plugins.config.js` | `dsh-mcp-client` 源码、sandbox |
 | 第 7 天收束 | `README.zh-CN.md` | `src/` 实现细节 |
 | 补充篇沙箱 | `path.js` `sandbox-runtime.js` `plugins/sandbox.js` `tools/*` | 可以看测试，先别抄 400 行正则 |
+| 补充篇 2 压缩 | `token-meter-runtime.js` `compaction-runtime.js` 及两个插件 | 官方 compaction 包 + token-meter README（replay-aware fold 不看） |
 
 原则：**先自己写到能测过，再打开对照文件。**
 
@@ -1723,7 +1778,7 @@ await root.plugin(cli, {
 
 本仓库故意没做，新手更不该做：
 
-- maxSteps / token budget / compaction
+- maxSteps / token budget（compaction 保留了最小形态，见补充篇 2）
 - 内核级 sandbox、容器、seccomp
 - 完整权限系统、credentials、telemetry
 - 插件市场
@@ -1770,6 +1825,16 @@ CLI、MCP 是为了证明这五个抽象够用。沙箱 / Bash / 文件工具也
 18. `test/integration.test.js` 能在真实 Cordis 上把插件栈启起来并跑完一轮；外部插件加载器容忍 optional 失败、拒绝 required 失败
 19. `pnpm test` 一共 22 条（`test/core.test.js` 20 条 + `test/integration.test.js` 2 条），和本仓库一致
 
+### 补充篇 2（对齐本仓库 25 条）
+
+19. 计量把 40 个字符估成 10 token 加每条消息开销
+20. 压缩后投影显示摘要 + 保留事件，但日志里原始事件一条不少
+21. 切点绝不把 assistant tool_calls 和它的 tool results 拆开
+22. 叠加压缩只显示最新一条摘要
+23. 低于 keepEvents 下限时，即使超过阈值 `maybeCompact` 也返回 null
+24. 长会话 mock 场景在步骤边界自动压缩
+25. `finish_reason: length` 到达 `onFinish`，并落在 assistant/message 事件上
+
 ---
 
 ## 本仓库怎么跑（对照用，不是起点）
@@ -1793,6 +1858,8 @@ CLI 命令：
 /model deepseek/deepseek-v4-flash
 /history
 /prompt
+/usage
+/compact
 /reset
 /exit
 ```

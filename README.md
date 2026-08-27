@@ -14,6 +14,11 @@ It deliberately keeps five things:
 4. LLM Provider Adapter
 5. Agent Loop -> model -> tool -> model -> answer
 
+Plus one supporting pair that keeps the infinite loop alive in long sessions — both modeled after the official harness in miniature:
+
+6. Token Meter -> a fixed 4-chars-per-token heuristic (no exact tokenizer)
+7. Compaction -> append one `session/compact` event; deriveMessages() projects the covered prefix as a single summary. The log stays append-only.
+
 It also keeps the Bash/File tools and the official `@deepseek-ai/dsh-mcp-client` + Context7, to prove "Everything is a Plugin". Context7 is optional: the CLI still starts when it is unreachable — you just don't get those MCP tools.
 
 ## Demo
@@ -58,11 +63,15 @@ The path once Context7 is connected:
 /model deepseek/deepseek-v4-flash
 /history
 /prompt
+/usage
+/compact
 /reset
 /exit
 ```
 
 Writes and bash execution ask `[Y/n]` first. Press **Esc** while the agent is running to cancel the current run (arrow keys won't cancel it).
+
+`/usage` shows the estimated context size against the compaction threshold. `/compact` compacts manually (keep the last 20 message events, summarize the rest). The agent loop also compacts automatically at every step boundary once the estimate passes `MINI_DSH_COMPACT_AT` (default 24000 tokens). A `finish_reason: length` response is reported through `onFinish` and shown as `[truncated: output hit max tokens]`.
 
 ## Why is there no 12-step limit in the Agent Loop?
 
@@ -85,14 +94,15 @@ The only normal-ending condition is whether the model keeps requesting tools.
 Deliberately omitted here:
 
 - maxSteps
-- token/cost budget
-- compaction
+- token/cost budget (the token meter only estimates for compaction and `/usage`; no step gating)
 - no-progress detector
 - stop hooks
 - steering queue
 - full permission system (the learning version has an app-level path gate and a command denylist standing in front of the one real boundary: the CLI [Y/n] confirmation)
 - full model configuration center
 - TUI/Web UI
+
+Compaction is included in a deliberately minimal form (`src/core/compaction-runtime.js`): like the official harness, the infinite loop survives long sessions by folding old history into a summary — never by counting steps or gating on a token budget. Official-style pressure/overflow dual triggers, replay-aware metering, and tool-pairing rebalancing stay out of scope.
 
 These are very useful for a mature product, but not required to understand the core of an Agent Harness.
 
@@ -128,6 +138,9 @@ src/core/agent-runtime.js
   ↓
 src/core/agent-loop-runtime.js   ← the core
   ↓
+src/core/token-meter-runtime.js
+src/core/compaction-runtime.js   ← keeps the infinite loop alive
+  ↓
 src/plugins/cli.js
   ↓
 src/utils/path.js
@@ -150,11 +163,11 @@ test/core.test.js   ← behavior docs: one example per runtime
                                     Cordis Context
                                            │
     ┌────────────┬────────────┬────────────┬────────────┬────────────┬────────────┐
-    ▼            ▼            ▼            ▼            ▼            ▼
-    sessions     systemPrompt tools        llm          agents       agentLoop
-                              │            │                         Agent
-                              bash / files DeepSeek
-                              │
+    ▼            ▼            ▼            ▼            ▼            ▼            ▼
+    sessions     systemPrompt tools        llm          agents       agentLoop   tokenMeter
+                              │            │                         Agent    → compaction
+                              bash / files DeepSeek                            (threshold →
+                              │                                               summary event)
                               ctx.sandbox
                               path / command / Y/n
                               └── dsh-mcp-client (optional)
@@ -173,6 +186,6 @@ pnpm test
 pnpm check
 ```
 
-The tests include a case where an agent finishes only after 20 straight tool calls — proof that the Loop no longer has the old 12-step cap.
+The tests include a case where an agent finishes only after 20 straight tool calls — proof that the Loop no longer has the old 12-step cap. There are also cases for automatic compaction at a step boundary in a long session, stacked compactions keeping only the newest summary, and tool-call pairs never being split by a summary edge.
 
 Learn AI on [LINUX DO](https://linux.do)

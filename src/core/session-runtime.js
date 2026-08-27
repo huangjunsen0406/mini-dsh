@@ -61,12 +61,30 @@ export class SessionRuntime {
     /**
      * Folds the event log into OpenAI-style chat messages.
      * Skips non-message event types such as session/start.
+     *
+     * A `session/compact` event replaces every message event up to its
+     * `upToSeq` with a single summary message. The newest compaction wins:
+     * its summary already carries older summaries forward, so only the
+     * largest upToSeq is applied. The log itself is never rewritten —
+     * compaction only changes the projection.
      */
     deriveMessages(id) {
         const events = this.get(id).events
+
+        let compaction = null
+        for (const event of events) {
+            if (event.type === 'session/compact') compaction = event
+        }
+
         const messages = []
 
+        if (compaction) {
+            messages.push({ role: 'user', content: compaction.data.summary })
+        }
+
         for (const event of events) {
+            if (compaction && event.seq <= compaction.data.upToSeq) continue
+
             const { type, data } = event
 
             if (type === 'user/message') {

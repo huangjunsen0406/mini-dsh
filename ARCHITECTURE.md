@@ -17,6 +17,8 @@ ctx.tools
 ctx.llm
 ctx.agents
 ctx.agentLoop
+ctx.tokenMeter
+ctx.compaction
 ctx.sandbox
 ```
 
@@ -54,10 +56,27 @@ LLM
 SessionEvent[] = facts
 messages       = projection for the model
 
-event types: session/start · user/message · assistant/message · assistant/tool_calls · tool/result
+event types: session/start · user/message · assistant/message · assistant/tool_calls · tool/result · session/compact
 ```
 
 So tool calls, tool results, and reasoning_content all enter the same history.
+
+## Why Compaction is just another event
+
+```text
+tokenMeter (4 chars ≈ 1 token, fixed heuristic)
+    ↓
+estimate >= threshold (default 24000)
+    ↓
+SessionEvent: session/compact { summary, upToSeq }   ← append-only, never rewrites
+    ↓
+deriveMessages(): events up to upToSeq project as ONE summary message
+```
+
+The cut point never splits an assistant tool_calls message from its tool
+results. This is what keeps the infinite agent loop alive in long sessions —
+the official harness answers "context full" the same way: fold history into a
+summary, keep looping. Not by counting steps.
 
 ## Why MCP plugs in directly
 
@@ -79,7 +98,7 @@ The AgentLoop needs no `if (mcp)` branch.
 
 ## What the learning version deliberately omits
 
-Product-level DSH subsystems are intentionally not implemented here: compaction, budget, kernel-level sandbox, scheduler, telemetry, full settings/credentials, TUI/Web, etc.
+Product-level DSH subsystems are intentionally not implemented here: budget, kernel-level sandbox, scheduler, telemetry, full settings/credentials, TUI/Web, etc. Compaction exists here only in a minimal form: one threshold, one summary event, no pressure/overflow dual triggers, no replay-aware metering, no tool-pairing rebalancing.
 
 The learning version only adds an **application-level sandbox**, and the instructive part of it is where each gate fails:
 

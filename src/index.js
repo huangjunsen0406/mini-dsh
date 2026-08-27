@@ -4,12 +4,14 @@ import * as deepseek from './models/deepseek.js'
 import * as agentLoop from './plugins/agent-loop.js'
 import * as agents from './plugins/agents.js'
 import * as cli from './plugins/cli.js'
+import * as compaction from './plugins/compaction.js'
 import * as externalPlugins from './plugins/external-plugins.js'
 import * as llm from './plugins/llm.js'
 import * as runtimeContext from './plugins/runtime-context.js'
 import * as sandbox from './plugins/sandbox.js'
 import * as sessions from './plugins/sessions.js'
 import * as systemPrompt from './plugins/system-prompt.js'
+import * as tokenMeter from './plugins/token-meter.js'
 import * as tools from './plugins/tools.js'
 import * as bash from './tools/bash.js'
 import * as files from './tools/files.js'
@@ -31,6 +33,8 @@ await root.plugin(agentLoop)
 
 await root.plugin(runtimeContext, { workspace })
 await root.plugin(sandbox, { workspace })
+await root.plugin(tokenMeter)
+await root.plugin(compaction)
 await root.plugin(deepseek)
 await root.plugin(bash, { workspace })
 await root.plugin(files, { workspace })

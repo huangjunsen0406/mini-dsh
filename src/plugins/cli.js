@@ -1,7 +1,17 @@
 import readline from 'node:readline'
 
 export const name = 'mini-cli'
-export const inject = ['sessions', 'agents', 'agentLoop', 'tools', 'systemPrompt', 'llm', 'sandbox']
+export const inject = [
+    'sessions',
+    'agents',
+    'agentLoop',
+    'tools',
+    'systemPrompt',
+    'llm',
+    'sandbox',
+    'compaction',
+    'tokenMeter',
+]
 
 /**
  * Thinnest UI layer. Session, tools, LLM, and the agent loop
@@ -31,7 +41,7 @@ export function apply(ctx, config = {}) {
 
         console.log('\nmini-dsh: a learning runtime for DSH')
         console.log(
-            'commands: /tools /history /prompt /models /model [provider/model] /reset /exit\n',
+            'commands: /tools /history /prompt /models /model [provider/model] /usage /compact /reset /exit\n',
         )
         console.log(`model: ${agent.model}`)
         console.log(`sandbox workspace: ${ctx.sandbox.workspace}`)
@@ -112,6 +122,27 @@ export function apply(ctx, config = {}) {
                 return ask()
             }
 
+            if (text === '/usage') {
+                const used = ctx.compaction.measure(session.id)
+                console.log(
+                    `estimated context: ~${used} tokens (compaction at ${ctx.compaction.runtime.threshold})`,
+                )
+                console.log()
+                return ask()
+            }
+
+            if (text === '/compact') {
+                const result = await ctx.compaction.compact(session.id)
+                if (result) {
+                    console.log(`compacted up to event #${result.upToSeq}:`)
+                    console.log(result.summary)
+                } else {
+                    console.log('nothing to compact: not enough history yet')
+                }
+                console.log()
+                return ask()
+            }
+
             if (text === '/history') {
                 console.log(JSON.stringify(ctx.sessions.get(session.id).events, null, 2))
                 console.log()
@@ -138,6 +169,11 @@ export function apply(ctx, config = {}) {
             try {
                 await agent.send(text, {
                     signal: abort.signal,
+                    onFinish({ finishReason }) {
+                        if (finishReason === 'length') {
+                            console.log('\n\x1b[33m[truncated: output hit max tokens]\x1b[0m')
+                        }
+                    },
                     onReasoning(chunk) {
                         if (!inThinking) {
                             inThinking = true

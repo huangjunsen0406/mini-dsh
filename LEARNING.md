@@ -1270,6 +1270,8 @@ Run through the main-track acceptance by hand. `pnpm test` all green (13), `pnpm
 
 To also write the path gate, Approval, `read_file` / `bash`, do the **Supplement**. That part takes the tests from 13 to 22.
 
+To also write the token meter + compaction that keeps the infinite loop alive in long sessions, do **Supplement 2**. That part takes the tests from 18 to 25.
+
 ---
 
 ## Supplement: real tools + application-level sandbox
@@ -1697,6 +1699,58 @@ This is the final shape of this repo's `src/index.js`. `/prompt` now shows ident
 
 ---
 
+## Supplement 2: token meter + compaction
+
+After the Supplement. The infinite `while (true)` loop has a real problem: in a long session the context window fills up and the API starts failing. The official harness answers this with compaction — fold old history into a summary, keep looping. Not by counting steps. This supplement rebuilds that answer in ~150 lines.
+
+### Files to write
+
+```text
+src/core/token-meter-runtime.js
+src/plugins/token-meter.js
+src/core/compaction-runtime.js
+src/plugins/compaction.js
+src/plugins/agent-loop.js    # inject compaction; call maybeCompact at each step boundary
+src/core/agent-loop-runtime.js  # optional compaction + onFinish for finish_reason
+src/plugins/cli.js           # /usage + /compact + truncation notice
+src/models/deepseek.js       # capture finish_reason from the SSE stream
+src/index.js
+test/core.test.js            # add 7 tests
+```
+
+### 1. TokenMeterRuntime
+
+Stateless, one fixed heuristic — same trade-off as the official token-meter: **four characters per token plus a small per-message overhead** (default 4). No exact tokenizer, no config. `estimateText` / `estimateMessage` (content + reasoning_content + tool_calls JSON) / `measure(messages)`.
+
+### 2. CompactionRuntime
+
+The one rule that matters: **the log is append-only**. Compaction appends a single `session/compact { summary, upToSeq }` event; `deriveMessages()` then projects everything up to `upToSeq` as one summary message. The log is never rewritten — "model-visible means logged" survives compaction.
+
+Two invariants to get right:
+
+- **Cut points never split a tool pair.** Message events (user/message, assistant/*) are valid cut points; tool/result is not. When the target lands on a tool/result, extend the compacted prefix until the whole pair folds into the summary.
+- **The newest compaction wins.** Its transcript carries earlier summaries forward, so `deriveMessages()` applies only the largest `upToSeq` and never shows two summaries.
+
+`compact(sessionId, { keepEvents = 20 })` keeps the last 20 message events verbatim and summarizes the rest. `maybeCompact` checks `tokenMeter.measure(deriveMessages(id)) >= threshold` (default 24000, override with `MINI_DSH_COMPACT_AT`). The summarizer is injected: the plugin calls `ctx.llm.chat` directly — it never runs through the agent loop and never appends usage to the session log, exactly like the official compaction calling `llm.stream` directly.
+
+### 3. Wire it into the loop
+
+At the top of each step, before assembling the system prompt: `await this.compaction?.maybeCompact(sessionId, { signal })`. Optional dependency — the runtime tests construct `AgentLoopRuntime` without it.
+
+### 4. finish_reason: length
+
+Capture `choice.finish_reason` in the DeepSeek SSE loop and return it as `finishReason`. When the turn ends without tool calls, store it on the `assistant/message` event and surface it through a new optional `onFinish({ finishReason })` callback — the CLI prints `[truncated: output hit max tokens]`. This is a per-step output ceiling, **not** a token budget: the loop keeps going either way.
+
+### Supplement 2 tests
+
+Seven tests: meter math, projection-not-log, tool-pair integrity, stacked compaction, threshold gating, in-loop auto-compaction, and max-tokens reporting. When done, **25** total.
+
+### What stays out
+
+Pressure/overflow dual triggers, replay-aware metering with provider anchors, tool-pairing rebalancing, token/cost budgets, step gating. The official harness has none of the last two either — grep it if you don't believe me.
+
+---
+
 ## How to cross-check against this repo each day
 
 | Where you are | Files to compare | Don't look at yet |
@@ -1710,6 +1764,7 @@ This is the final shape of this repo's `src/index.js`. `/prompt` now shows ident
 | Day 6 MCP | `external-plugins.js` `plugins.config.js` | `dsh-mcp-client` source, sandbox |
 | Day 7 wrap-up | `README.md` | `src/` implementation details |
 | Supplement sandbox | `path.js` `sandbox-runtime.js` `plugins/sandbox.js` `tools/*` | you may read the tests, but don't copy the 400-line regexes |
+| Supplement 2 compaction | `token-meter-runtime.js` `compaction-runtime.js` and the two plugins | official compaction package + token-meter README (replay-aware fold stays out) |
 
 Principle: **write until it passes your own tests, then open the files to compare.**
 
@@ -1723,7 +1778,7 @@ For the Supplement's sandbox you may "write the implementation against the tests
 
 Deliberately absent from this repo — and you shouldn't add them either:
 
-- maxSteps / token budget / compaction
+- maxSteps / token budget (compaction exists in a minimal form; see Supplement 2)
 - kernel-level sandbox, containers, seccomp
 - full permission system, credentials, telemetry
 - a plugin marketplace
@@ -1770,6 +1825,16 @@ CLI and MCP exist to prove these five abstractions are sufficient. So do the san
 18. `test/integration.test.js` boots the real plugin stack on Cordis and runs a full turn; the external plugin loader tolerates an optional failure and rejects a required one
 19. `pnpm test` totals 22 (20 in `test/core.test.js` + 2 in `test/integration.test.js`), matching this repo
 
+### Supplement 2 (matches this repo's 25)
+
+19. The meter estimates 40 chars as 10 tokens plus the per-message overhead
+20. After compaction the projection shows the summary + kept events, but the log still contains every original event
+21. A cut never splits an assistant tool_calls message from its tool results
+22. Stacked compactions show only the newest summary
+23. `maybeCompact` below the keepEvents floor returns null even past the threshold
+24. A long mock session compacts automatically at a step boundary mid-run
+25. `finish_reason: length` reaches `onFinish` and lands on the assistant/message event
+
 ---
 
 ## How to run this repo (for comparison — not a starting point)
@@ -1793,6 +1858,8 @@ CLI commands:
 /model deepseek/deepseek-v4-flash
 /history
 /prompt
+/usage
+/compact
 /reset
 /exit
 ```

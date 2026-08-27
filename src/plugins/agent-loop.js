@@ -4,10 +4,10 @@ import { AgentLoopRuntime } from '../core/agent-loop-runtime.js'
 /**
  * Wraps AgentLoopRuntime as a Cordis Service so other plugins can
  * access it via ctx.agentLoop. inject waits until sessions, systemPrompt,
- * tools, and llm are ready before constructing the loop.
+ * tools, llm, and compaction are ready before constructing the loop.
  */
 class AgentLoopService extends Service {
-    static inject = ['sessions', 'systemPrompt', 'tools', 'llm']
+    static inject = ['sessions', 'systemPrompt', 'tools', 'llm', 'compaction']
 
     constructor(ctx) {
         super(ctx, 'agentLoop')
@@ -16,6 +16,7 @@ class AgentLoopService extends Service {
             systemPrompt: ctx.systemPrompt,
             tools: ctx.tools,
             llm: ctx.llm,
+            compaction: ctx.compaction,
         })
     }
 
@@ -25,7 +26,7 @@ class AgentLoopService extends Service {
 }
 
 export const name = 'mini-agent-loop'
-export const inject = ['sessions', 'systemPrompt', 'tools', 'llm']
+export const inject = ['sessions', 'systemPrompt', 'tools', 'llm', 'compaction']
 
 export function apply(ctx) {
     ctx.plugin(AgentLoopService)

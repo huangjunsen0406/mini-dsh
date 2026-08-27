@@ -6,12 +6,14 @@ import test from 'node:test'
 import { Context } from '@deepseek-ai/cordis'
 import * as agentLoop from '../src/plugins/agent-loop.js'
 import * as agents from '../src/plugins/agents.js'
+import * as compaction from '../src/plugins/compaction.js'
 import * as externalPlugins from '../src/plugins/external-plugins.js'
 import * as llm from '../src/plugins/llm.js'
 import * as runtimeContext from '../src/plugins/runtime-context.js'
 import * as sandbox from '../src/plugins/sandbox.js'
 import * as sessions from '../src/plugins/sessions.js'
 import * as systemPrompt from '../src/plugins/system-prompt.js'
+import * as tokenMeter from '../src/plugins/token-meter.js'
 import * as tools from '../src/plugins/tools.js'
 import * as bash from '../src/tools/bash.js'
 import * as files from '../src/tools/files.js'
@@ -34,6 +36,8 @@ test('the whole plugin stack boots on Cordis and runs a full model -> tool -> mo
         await root.plugin(agentLoop)
         await root.plugin(runtimeContext, { workspace })
         await root.plugin(sandbox, { workspace, autoApprove: true })
+        await root.plugin(tokenMeter)
+        await root.plugin(compaction)
         await root.plugin(bash, { workspace })
         await root.plugin(files, { workspace })
 
@@ -45,6 +49,8 @@ test('the whole plugin stack boots on Cordis and runs a full model -> tool -> mo
         assert.ok(root.agents)
         assert.ok(root.agentLoop)
         assert.ok(root.sandbox)
+        assert.ok(root.tokenMeter)
+        assert.ok(root.compaction)
 
         // ctx.effect-based registrations from runtime-context/sandbox/tools all ran.
         const toolNames = root.tools

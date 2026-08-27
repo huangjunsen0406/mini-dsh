@@ -14,6 +14,11 @@
 4. LLM Provider Adapter
 5. Agent Loop -> model -> tool -> model -> answer
 
+另外补了一对让无限循环在长会话里活下来的配套（都是官方机制的缩小版）：
+
+6. Token Meter —— 固定 4 字符 ≈ 1 token 的粗估，不做精确 tokenizer
+7. Compaction —— 往日志追加一条 `session/compact` 事件，deriveMessages() 把被覆盖的前缀投影成一条摘要；日志永远 append-only
+
 另外保留了 Bash/File 工具和官方 `@deepseek-ai/dsh-mcp-client` + Context7，用来验证“Everything is a Plugin”。Context7 是可选的：连不上时 CLI 照样启动，只是没有那些 MCP 工具。
 
 ## 演示
@@ -58,11 +63,15 @@ Context7 连上之后的路径：
 /model deepseek/deepseek-v4-flash
 /history
 /prompt
+/usage
+/compact
 /reset
 /exit
 ```
 
 写文件和 Bash 执行前会问 `[Y/n]`。Agent 跑起来后按 **Esc** 取消当前轮（方向键不会误取消）。
+
+`/usage` 显示估算的上下文占用与压缩阈值。`/compact` 手动压缩（保留最近 20 条消息事件，其余折叠为摘要）。Agent Loop 每个步骤边界也会自动检查：估算超过 `MINI_DSH_COMPACT_AT`（默认 24000 tokens）就压缩。模型返回 `finish_reason: length` 时通过 `onFinish` 上报，CLI 显示 `[truncated: output hit max tokens]`。
 
 ## Agent Loop 为什么没有 12 步限制？
 
@@ -85,14 +94,15 @@ while (true) {
 这里没有加入：
 
 - maxSteps
-- token/cost budget
-- compaction
+- token/cost budget（token 计量只服务于压缩和 `/usage` 展示，不做步数门控）
 - no-progress detector
 - stop hooks
 - steering queue
 - 完整权限系统（学习版只有应用层路径闸门和命令黑名单，挡在唯一真正的边界——CLI [Y/n] 确认——前面）
 - 完整模型配置中心
 - TUI/Web UI
+
+Compaction 保留了刻意简化的版本（`src/core/compaction-runtime.js`）：和官方一致，无限循环靠"上下文满了就把旧历史折叠成摘要"活下来——而不是数步数或 token 预算掐断。官方的 pressure/overflow 双触发、replay-aware 精确计量、tool-pairing 再平衡等工程细节不在范围内。
 
 这些都是成熟产品很有用的能力，但不是理解 Agent Harness 核心所必需的。
 
@@ -128,6 +138,9 @@ src/core/agent-runtime.js
   ↓
 src/core/agent-loop-runtime.js   ← 最核心
   ↓
+src/core/token-meter-runtime.js
+src/core/compaction-runtime.js   ← 让无限循环活得下去
+  ↓
 src/plugins/cli.js
   ↓
 src/utils/path.js
@@ -150,11 +163,11 @@ test/core.test.js   ← 行为文档：每个 runtime 都有对应示例
                                     Cordis Context
                                            │
     ┌────────────┬────────────┬────────────┬────────────┬────────────┬────────────┐
-    ▼            ▼            ▼            ▼            ▼            ▼
-    sessions     systemPrompt tools        llm          agents       agentLoop
-                              │            │                         Agent
-                              bash / files DeepSeek
-                              │
+    ▼            ▼            ▼            ▼            ▼            ▼            ▼
+    sessions     systemPrompt tools        llm          agents       agentLoop   tokenMeter
+                              │            │                         Agent    → compaction
+                              bash / files DeepSeek                            (阈值触发 →
+                              │                                               摘要事件)
                               ctx.sandbox
                               path / command / Y/n
                               └── dsh-mcp-client (optional)
@@ -173,6 +186,6 @@ pnpm test
 pnpm check
 ```
 
-测试里包含一个 Agent 连续执行 20 次工具调用后才结束的案例，用来证明 Agent Loop 已经不再有原来的 12-step 正常上限。
+测试里包含一个 Agent 连续执行 20 次工具调用后才结束的案例，用来证明 Agent Loop 已经不再有原来的 12-step 正常上限。还包含长会话在步骤边界自动压缩、多次压缩只保留最新摘要、tool 调用对永不被摘要切断的案例。
 
 学AI上[LINUX DO](https://linux.do)

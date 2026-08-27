@@ -9,14 +9,19 @@ const CANCELLED_RESULT = 'ToolError: the run was cancelled before this tool ran'
  * returns no tool calls, or when the abort signal fires.
  */
 export class AgentLoopRuntime {
-    constructor({ sessions, systemPrompt, tools, llm }) {
+    constructor({ sessions, systemPrompt, tools, llm, compaction }) {
         this.sessions = sessions
         this.systemPrompt = systemPrompt
         this.tools = tools
         this.llm = llm
+        this.compaction = compaction
     }
 
-    async run(agent, input, { signal, onReasoning, onContent, onToolCall, onToolResult } = {}) {
+    async run(
+        agent,
+        input,
+        { signal, onReasoning, onContent, onToolCall, onToolResult, onFinish } = {},
+    ) {
         const sessionId = agent.sessionId
 
         // Session events are the source of truth; user input goes into the log first.
@@ -30,6 +35,10 @@ export class AgentLoopRuntime {
             if (signal?.aborted) {
                 throw new Error('Agent run cancelled')
             }
+
+            // Compact at the step boundary when the estimated context is
+            // full, so the infinite loop survives arbitrarily long sessions.
+            await this.compaction?.maybeCompact(sessionId, { signal })
 
             // Reassemble the system prompt every step so dynamic bits (time, cwd) stay fresh.
             const system = await this.systemPrompt.assemble({
@@ -58,7 +67,12 @@ export class AgentLoopRuntime {
             // No tool calls means the model considers the task done.
             if (toolCalls.length === 0) {
                 const content = response.content ?? ''
-                this.sessions.append(sessionId, 'assistant/message', { content })
+                this.sessions.append(sessionId, 'assistant/message', {
+                    content,
+                    // 'length' here means the output was truncated by max_tokens.
+                    ...(response.finishReason ? { finishReason: response.finishReason } : {}),
+                })
+                onFinish?.({ finishReason: response.finishReason ?? null })
                 return content
             }
 
