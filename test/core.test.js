@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict'
+import fs from 'node:fs/promises'
+import os from 'node:os'
+import path from 'node:path'
 import test from 'node:test'
 import { AgentLoopRuntime } from '../src/core/agent-loop-runtime.js'
 import { AgentRuntime } from '../src/core/agent-runtime.js'
@@ -433,6 +436,25 @@ test('resolveInside blocks .. and absolute escapes but allows a ..hidden filenam
     assert.throws(() => resolveInside(root, '../etc/passwd'), /path escapes the workspace/)
     assert.throws(() => resolveInside(root, '/etc/passwd'), /path escapes the workspace/)
     assert.throws(() => resolveInside(root, 'src/../../etc/passwd'), /path escapes the workspace/)
+})
+
+test('resolveInside blocks a symlink inside the workspace that points out of it', async () => {
+    const { resolveInside } = await import('../src/utils/path.js')
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'mini-dsh-link-'))
+
+    try {
+        await fs.writeFile(path.join(root, 'inside.txt'), 'ok')
+        // The link itself is inside the workspace; what it points at is not.
+        await fs.symlink(os.tmpdir(), path.join(root, 'escape'))
+
+        assert.equal(resolveInside(root, 'inside.txt'), path.join(root, 'inside.txt'))
+
+        assert.throws(() => resolveInside(root, 'escape/passwd'), /through a symlink/)
+        // A file that does not exist yet is the write path — it must be gated too.
+        assert.throws(() => resolveInside(root, 'escape/not-created-yet'), /through a symlink/)
+    } finally {
+        await fs.rm(root, { recursive: true, force: true })
+    }
 })
 
 test('Sandbox blocks dangerous commands and allows ordinary workspace commands', async () => {
