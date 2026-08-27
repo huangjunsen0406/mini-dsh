@@ -81,7 +81,13 @@ The AgentLoop needs no `if (mcp)` branch.
 
 Product-level DSH subsystems are intentionally not implemented here: compaction, budget, kernel-level sandbox, scheduler, telemetry, full settings/credentials, TUI/Web, etc.
 
-The learning version only adds an **application-level sandbox**: `path.js` constrains file paths to the workspace, `SandboxRuntime` intercepts dangerous shell commands. Write/Bash tools request confirmation via `ctx.sandbox.approve()`, and the CLI registers the callback with `setApprover` and presents the `[Y/n]` gate. This is not container isolation — it is just the Harness's own policy gate.
+The learning version only adds an **application-level sandbox**, and the instructive part of it is where each gate fails:
+
+- `path.js` constrains file paths to the workspace. Allowlist-shaped, so it is the strongest of the three, and it checks containment twice: lexically for `../` and absolute paths, then again through `realpath` so a symlink living *inside* the workspace cannot point out of it. Getting the second check right is the whole lesson of an allowlist — an allowlist only holds if what you resolve is what the OS will resolve.
+- `SandboxRuntime` intercepts dangerous shell commands. This one is a denylist, so it is incomplete by construction — `echo <base64> | base64 -d | sh`, `python3 -c '...'` and `node -e '...'` all sail through. Adding patterns does not fix that; that is simply what denylists are.
+- `ctx.sandbox.approve()` stops writes and bash execution for a `[Y/n]`. The CLI registers the callback with `setApprover`. **This is the permission boundary.** The two gates above only decide what reaches the human, and how often the human is asked.
+
+So: not container isolation, and not really a "sandbox" in the isolation sense — a policy gate standing in front of a person. If you take one thing from this file into a real system, take that ordering: a denylist buys convenience, an allowlist buys a boundary, and neither replaces someone approving the dangerous thing.
 
 Once you have these five abstractions down, the real DSH is much easier to read:
 

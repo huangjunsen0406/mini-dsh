@@ -90,7 +90,7 @@ Deliberately omitted here:
 - no-progress detector
 - stop hooks
 - steering queue
-- full permission system (the learning version only has app-level path limits / command blacklist / CLI [Y/n] confirmation)
+- full permission system (the learning version has an app-level path gate and a command denylist standing in front of the one real boundary: the CLI [Y/n] confirmation)
 - full model configuration center
 - TUI/Web UI
 

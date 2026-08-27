@@ -45,10 +45,34 @@ const DEFAULT_ALLOW_HOSTS = ['localhost', '127.0.0.1', '::1', '0.0.0.0']
 /**
  * Lightweight application-level sandbox.
  *
- * This is not kernel isolation, seccomp, or a container. It does three things:
- * 1. Path gate: every file path must land inside the workspace.
- * 2. Command policy: block rm -rf /, writes to system paths, unauthorized curl, etc.
- * 3. Approval: writes and bash execution go through the UI first.
+ * Not kernel isolation, not seccomp, not a container. The useful thing to
+ * understand here is what it does NOT stop, because that is what explains
+ * why the approval gate has to exist.
+ *
+ * The command policy is a denylist, so it is incomplete by construction.
+ * Anything that reaches a second interpreter walks straight past it:
+ *
+ *     echo <base64> | base64 -d | sh      python3 -c '...'      node -e '...'
+ *
+ * Those are not gaps waiting for one more pattern. Enumerating the bad is
+ * the losing side of the argument. Read the three gates in that light:
+ *
+ * 1. Path gate (utils/path.js): allowlist-shaped, and so the strongest of
+ *    the three — resolve the path, then require the workspace prefix, twice:
+ *    once lexically for `../`, and once through realpath so a symlink living
+ *    inside the workspace cannot point out of it. This one does hold.
+ * 2. Command policy (below): blocks the obvious shapes — rm -rf /, sudo,
+ *    writes to system paths, curl piped into a shell. It raises the cost of
+ *    an accident, not of an attack. A `deny` tells you something; an `allow`
+ *    tells you almost nothing.
+ * 3. Approval (approve): writes and bash execution stop for a [Y/n] first.
+ *    This is the actual permission boundary — a human reads the command
+ *    before it runs. The other two only decide what reaches the human, and
+ *    how often the human is asked.
+ *
+ * Worth carrying into a real system: a denylist buys convenience, an
+ * allowlist buys a boundary, and neither replaces someone competent
+ * approving the dangerous thing.
  */
 export class SandboxRuntime {
     #approver = null

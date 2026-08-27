@@ -90,7 +90,7 @@ while (true) {
 - no-progress detector
 - stop hooks
 - steering queue
-- 完整权限系统（学习版只有应用层路径限制 / 命令黑名单 / CLI [Y/n] 确认）
+- 完整权限系统（学习版只有应用层路径闸门和命令黑名单，挡在唯一真正的边界——CLI [Y/n] 确认——前面）
 - 完整模型配置中心
 - TUI/Web UI
 
