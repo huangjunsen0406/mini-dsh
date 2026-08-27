@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { randomUUID } from 'node:crypto'
 
 /**
  * In-memory session store.
@@ -8,50 +8,50 @@ import { randomUUID } from "node:crypto";
  * reasoning_content live in a unified log.
  */
 export class SessionRuntime {
-    #sessions = new Map();
+    #sessions = new Map()
 
     create(meta = {}) {
-        const id = randomUUID();
+        const id = randomUUID()
 
         const session = {
             id,
             meta: { ...meta },
             events: [],
             createdAt: new Date().toISOString(),
-        };
+        }
 
-        this.#sessions.set(id, session);
+        this.#sessions.set(id, session)
         // Initialize log with a session/start event.
-        this.append(id, "session/start", { meta });
-        return session;
+        this.append(id, 'session/start', { meta })
+        return session
     }
 
     get(id) {
-        const session = this.#sessions.get(id);
+        const session = this.#sessions.get(id)
         if (!session) {
-            throw new Error(`Session ${id} not found`);
+            throw new Error(`Session ${id} not found`)
         }
-        return session;
+        return session
     }
 
     append(id, type, data) {
-        const session = this.get(id);
+        const session = this.get(id)
 
         const event = {
             seq: session.events.length + 1,
             type,
             data,
             at: new Date().toISOString(),
-        };
-        session.events.push(event);
+        }
+        session.events.push(event)
 
-        return event;
+        return event
     }
 
     clear(id) {
-        const old = this.get(id);
-        old.events = [];
-        this.append(id, "session/start", { meta: old.meta, reset: true });
+        const old = this.get(id)
+        old.events = []
+        this.append(id, 'session/start', { meta: old.meta, reset: true })
     }
 
     list() {
@@ -63,44 +63,42 @@ export class SessionRuntime {
      * Skips non-message event types such as session/start.
      */
     deriveMessages(id) {
-        const events = this.get(id).events;
-        const messages = [];
+        const events = this.get(id).events
+        const messages = []
 
         for (const event of events) {
-            const { type, data } = event;
+            const { type, data } = event
 
-            if (type === "user/message") {
+            if (type === 'user/message') {
                 messages.push({
-                    role: "user",
+                    role: 'user',
                     content: data.content,
-                });
+                })
             }
 
-            if (type === "assistant/message") {
+            if (type === 'assistant/message') {
                 messages.push({
-                    role: "assistant",
+                    role: 'assistant',
                     content: data.content,
-                });
+                })
             }
 
-            if (type === "assistant/tool_calls") {
+            if (type === 'assistant/tool_calls') {
                 messages.push({
-                    role: "assistant",
+                    role: 'assistant',
                     content: data.content ?? null,
                     // Attach reasoning_content only when present.
-                    ...(data.reasoningContent
-                        ? { reasoning_content: data.reasoningContent }
-                        : {}),
+                    ...(data.reasoningContent ? { reasoning_content: data.reasoningContent } : {}),
                     tool_calls: data.toolCalls.map((call) => ({
                         id: call.id,
-                        type: "function",
+                        type: 'function',
                         function: {
                             name: call.name,
                             // Chat Completions expects arguments as a JSON string.
                             arguments: JSON.stringify(call.arguments ?? {}),
                         },
                     })),
-                });
+                })
             }
 
             if (type === 'tool/result') {
@@ -112,6 +110,6 @@ export class SessionRuntime {
             }
         }
 
-        return messages;
+        return messages
     }
 }

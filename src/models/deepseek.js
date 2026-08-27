@@ -9,13 +9,9 @@ export function apply(ctx, config = {}) {
         'https://api.deepseek.com'
     ).replace(/\/$/, '')
 
-    const models = config.models ?? [
-        'deepseek-v4-pro',
-        'deepseek-v4-flash',
-    ]
+    const models = config.models ?? ['deepseek-v4-pro', 'deepseek-v4-flash']
 
-    const thinking =
-        config.thinking ?? process.env.DEEPSEEK_THINKING ?? 'enabled'
+    const thinking = config.thinking ?? process.env.DEEPSEEK_THINKING ?? 'enabled'
 
     const adapter = {
         models,
@@ -29,10 +25,7 @@ export function apply(ctx, config = {}) {
 
             const body = {
                 model,
-                messages: [
-                    ...(system ? [{ role: 'system', content: system }] : []),
-                    ...messages,
-                ],
+                messages: [...(system ? [{ role: 'system', content: system }] : []), ...messages],
                 stream: true,
                 thinking: {
                     type: thinking === 'disabled' ? 'disabled' : 'enabled',
@@ -52,9 +45,7 @@ export function apply(ctx, config = {}) {
 
             if (!response.ok) {
                 const text = await response.text()
-                throw new Error(
-                    `DeepSeek API ${response.status}: ${text.slice(0, 2000)}`,
-                )
+                throw new Error(`DeepSeek API ${response.status}: ${text.slice(0, 2000)}`)
             }
 
             if (!response.body) {
@@ -101,10 +92,9 @@ export function apply(ctx, config = {}) {
     ctx.effect(
         () =>
             ctx.llm.register('deepseek', adapter, {
-                defaultModel:
-                    process.env.MINI_DSH_MODEL?.startsWith('deepseek/')
-                        ? process.env.MINI_DSH_MODEL.slice('deepseek/'.length)
-                        : 'deepseek-v4-pro',
+                defaultModel: process.env.MINI_DSH_MODEL?.startsWith('deepseek/')
+                    ? process.env.MINI_DSH_MODEL.slice('deepseek/'.length)
+                    : 'deepseek-v4-pro',
             }),
         'register deepseek provider',
     )
@@ -141,9 +131,7 @@ function parseSSELine(line) {
     const trimmed = line.trim()
     if (!trimmed || trimmed.startsWith(':')) return null
     if (!trimmed.startsWith('data:')) return null
-    const dataStr = trimmed.startsWith('data: ')
-        ? trimmed.slice(6).trim()
-        : trimmed.slice(5).trim()
+    const dataStr = trimmed.startsWith('data: ') ? trimmed.slice(6).trim() : trimmed.slice(5).trim()
     if (dataStr === '[DONE]') return '[DONE]'
     try {
         return JSON.parse(dataStr)
@@ -174,8 +162,8 @@ export function finalizeToolCalls(map) {
     return [...map.entries()]
         .sort(([a], [b]) => a - b)
         .map(([, call]) => call)
-        .filter(call => call.name)
-        .map(call => ({
+        .filter((call) => call.name)
+        .map((call) => ({
             id: call.id,
             name: call.name,
             arguments: parseToolArguments(call.arguments),

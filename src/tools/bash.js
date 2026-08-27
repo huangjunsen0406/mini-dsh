@@ -8,35 +8,46 @@ export function apply(ctx, config = {}) {
     const timeoutMs = Number(config.timeoutMs ?? 30_000)
     const maxOutput = Number(config.maxOutput ?? 32_000)
 
-    ctx.effect(() => ctx.tools.register({
-        name: 'bash',
-        description: 'Run a bash command in the current workspace. Use it for time, git, builds, tests, and local environment info. Dangerous commands are blocked by the sandbox and execution requires user approval.',
-        parameters: {
-            type: 'object',
-            additionalProperties: false,
-            properties: {
-                command: { type: 'string', description: 'Bash command to run' },
-            },
-            required: ['command'],
-        },
-        output: {
-            schema: { type: 'object' },
-            render(_args, value) {
-                return [{ type: 'text', text: JSON.stringify(value, null, 2) }]
-            },
-        },
-        async execute({ command }, exec) {
-            if (typeof command !== 'string' || !command.trim()) throw new Error('command is required')
-            ctx.sandbox.assertCommand(command)
-            await ctx.sandbox.approve({
-                tool: 'bash',
-                kind: 'bash',
-                summary: `bash: ${command}`,
-                command,
-            })
-            return runBash(command, { workspace, timeoutMs, maxOutput, signal: exec.signal })
-        },
-    }), 'tool: bash')
+    ctx.effect(
+        () =>
+            ctx.tools.register({
+                name: 'bash',
+                description:
+                    'Run a bash command in the current workspace. Use it for time, git, builds, tests, and local environment info. Dangerous commands are blocked by the sandbox and execution requires user approval.',
+                parameters: {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                        command: { type: 'string', description: 'Bash command to run' },
+                    },
+                    required: ['command'],
+                },
+                output: {
+                    schema: { type: 'object' },
+                    render(_args, value) {
+                        return [{ type: 'text', text: JSON.stringify(value, null, 2) }]
+                    },
+                },
+                async execute({ command }, exec) {
+                    if (typeof command !== 'string' || !command.trim())
+                        throw new Error('command is required')
+                    ctx.sandbox.assertCommand(command)
+                    await ctx.sandbox.approve({
+                        tool: 'bash',
+                        kind: 'bash',
+                        summary: `bash: ${command}`,
+                        command,
+                    })
+                    return runBash(command, {
+                        workspace,
+                        timeoutMs,
+                        maxOutput,
+                        signal: exec.signal,
+                    })
+                },
+            }),
+        'tool: bash',
+    )
 }
 
 function runBash(command, { workspace, timeoutMs, maxOutput, signal }) {
@@ -53,8 +64,12 @@ function runBash(command, { workspace, timeoutMs, maxOutput, signal }) {
         let killedByTimeout = false
 
         const append = (current, chunk) => (current + chunk.toString()).slice(-maxOutput)
-        child.stdout.on('data', chunk => { stdout = append(stdout, chunk) })
-        child.stderr.on('data', chunk => { stderr = append(stderr, chunk) })
+        child.stdout.on('data', (chunk) => {
+            stdout = append(stdout, chunk)
+        })
+        child.stderr.on('data', (chunk) => {
+            stderr = append(stderr, chunk)
+        })
 
         const timer = setTimeout(() => {
             killedByTimeout = true
@@ -65,7 +80,7 @@ function runBash(command, { workspace, timeoutMs, maxOutput, signal }) {
         const onAbort = () => child.kill('SIGTERM')
         signal?.addEventListener('abort', onAbort, { once: true })
 
-        child.on('error', error => {
+        child.on('error', (error) => {
             clearTimeout(timer)
             signal?.removeEventListener('abort', onAbort)
             reject(error)

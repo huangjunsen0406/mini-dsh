@@ -1,15 +1,7 @@
 import readline from 'node:readline'
 
 export const name = 'mini-cli'
-export const inject = [
-    'sessions',
-    'agents',
-    'agentLoop',
-    'tools',
-    'systemPrompt',
-    'llm',
-    'sandbox',
-]
+export const inject = ['sessions', 'agents', 'agentLoop', 'tools', 'systemPrompt', 'llm', 'sandbox']
 
 /**
  * Thinnest UI layer. Session, tools, LLM, and the agent loop
@@ -19,10 +11,7 @@ export const inject = [
 export function apply(ctx, config = {}) {
     const session = ctx.sessions.create({ source: 'cli' })
 
-    const initialModel =
-        config.model ??
-        process.env.MINI_DSH_MODEL ??
-        ctx.llm.defaultSelection()
+    const initialModel = config.model ?? process.env.MINI_DSH_MODEL ?? ctx.llm.defaultSelection()
 
     const agent = ctx.agents.create({
         name: 'cli-agent',
@@ -49,7 +38,7 @@ export function apply(ctx, config = {}) {
         console.log('Writes and bash execution ask [Y/n] first. Press Esc to cancel a run.\n')
 
         let abort = null
-        const onStdinData = chunk => {
+        const onStdinData = (chunk) => {
             if (!running || !abort || abort.signal.aborted) return
             // Esc is 0x1b. Arrow keys also start with Esc — ignore those sequences.
             const bytes = Buffer.from(chunk)
@@ -57,7 +46,7 @@ export function apply(ctx, config = {}) {
         }
         process.stdin.on('data', onStdinData)
 
-        const disposeApprover = ctx.sandbox.setApprover(request => {
+        const disposeApprover = ctx.sandbox.setApprover((request) => {
             // Pause Esc handling so the Y/n prompt stays in cooked readline mode.
             const wasRunning = running
             running = false
@@ -70,7 +59,7 @@ export function apply(ctx, config = {}) {
             if (!running) rl.question('User > ', handle)
         }
 
-        const handle = async input => {
+        const handle = async (input) => {
             const text = input.trim()
             if (!text) return ask()
 
@@ -87,8 +76,10 @@ export function apply(ctx, config = {}) {
             }
 
             if (text === '/tools') {
-                const lines = ctx.tools.list().map(tool => {
-                    const firstLine = String(tool.description ?? '').trim().split('\n')[0]
+                const lines = ctx.tools.list().map((tool) => {
+                    const firstLine = String(tool.description ?? '')
+                        .trim()
+                        .split('\n')[0]
                     return `- ${tool.name}: ${firstLine}`
                 })
                 console.log(lines.join('\n') || '(no tools)')
@@ -122,9 +113,7 @@ export function apply(ctx, config = {}) {
             }
 
             if (text === '/history') {
-                console.log(
-                    JSON.stringify(ctx.sessions.get(session.id).events, null, 2),
-                )
+                console.log(JSON.stringify(ctx.sessions.get(session.id).events, null, 2))
                 console.log()
                 return ask()
             }
@@ -174,12 +163,16 @@ export function apply(ctx, config = {}) {
                         }
                         inContent = false
                         const argsStr = JSON.stringify(call.arguments ?? {})
-                        process.stdout.write(`\n\x1b[36m[Tool Call: ${call.name}]\x1b[0m ${argsStr}\n`)
+                        process.stdout.write(
+                            `\n\x1b[36m[Tool Call: ${call.name}]\x1b[0m ${argsStr}\n`,
+                        )
                     },
                     onToolResult(res) {
                         const preview = String(res.renderedContent || '').slice(0, 300)
                         const truncated = (res.renderedContent || '').length > 300 ? '...' : ''
-                        process.stdout.write(`\x1b[32m[Tool Result: ${res.name}]\x1b[0m ${preview}${truncated}\n`)
+                        process.stdout.write(
+                            `\x1b[32m[Tool Result: ${res.name}]\x1b[0m ${preview}${truncated}\n`,
+                        )
                     },
                 })
 
@@ -218,11 +211,13 @@ export function apply(ctx, config = {}) {
 }
 
 function askApproval(rl, request) {
-    return new Promise(resolve => {
+    return new Promise((resolve) => {
         const summary = request.summary ?? request.tool ?? 'this operation'
         process.stdout.write(`\n\x1b[33m[Approval]\x1b[0m ${summary}\n`)
-        rl.question('Allow this? [Y/n] ', answer => {
-            const text = String(answer ?? '').trim().toLowerCase()
+        rl.question('Allow this? [Y/n] ', (answer) => {
+            const text = String(answer ?? '')
+                .trim()
+                .toLowerCase()
             const approved = text === '' || text === 'y' || text === 'yes'
             if (!approved) process.stdout.write('\x1b[31mrejected.\x1b[0m\n')
             resolve(approved)

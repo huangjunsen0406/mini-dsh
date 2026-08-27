@@ -10,9 +10,15 @@ class AgentsService extends Service {
         super(ctx, 'agents')
         this.runtime = new AgentRuntime()
     }
-    register(agent) { return this.runtime.register(agent) }
-    create(options) { return this.runtime.create(options) }
-    list() { return this.runtime.list() }
+    register(agent) {
+        return this.runtime.register(agent)
+    }
+    create(options) {
+        return this.runtime.create(options)
+    }
+    list() {
+        return this.runtime.list()
+    }
 }
 
 export const name = 'mini-agents'

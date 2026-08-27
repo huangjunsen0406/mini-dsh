@@ -10,8 +10,10 @@ export function isInside(workspace, target) {
     const root = path.resolve(workspace)
     const resolved = path.resolve(target)
     const relative = path.relative(root, resolved)
-    return relative === ''
-        || (relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))
+    return (
+        relative === '' ||
+        (relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))
+    )
 }
 
 /**
@@ -25,7 +27,9 @@ export function resolveInside(workspace, requested = '.') {
         throw new Error('path must be a string')
     }
     if (requested.includes('\0')) {
-        throw new Error(`invalid path, workspace=${path.resolve(workspace)}, requested=${requested}`)
+        throw new Error(
+            `invalid path, workspace=${path.resolve(workspace)}, requested=${requested}`,
+        )
     }
 
     const root = path.resolve(workspace)

@@ -2,17 +2,40 @@ import path from 'node:path'
 import { resolveInside } from '../utils/path.js'
 
 const SYSTEM_PATH_PREFIXES = [
-    '/etc', '/usr', '/bin', '/sbin', '/boot', '/dev', '/proc', '/sys',
-    '/root', '/lib', '/lib64', '/var', '/opt', '/System', '/Library', '/private',
+    '/etc',
+    '/usr',
+    '/bin',
+    '/sbin',
+    '/boot',
+    '/dev',
+    '/proc',
+    '/sys',
+    '/root',
+    '/lib',
+    '/lib64',
+    '/var',
+    '/opt',
+    '/System',
+    '/Library',
+    '/private',
 ]
 
 const SYSTEM_BIN_PREFIXES = [
-    '/bin/', '/usr/bin/', '/usr/local/bin/', '/opt/homebrew/bin/',
-    '/sbin/', '/usr/sbin/',
+    '/bin/',
+    '/usr/bin/',
+    '/usr/local/bin/',
+    '/opt/homebrew/bin/',
+    '/sbin/',
+    '/usr/sbin/',
 ]
 
 const ALLOWED_DEVICES = new Set([
-    '/dev/null', '/dev/zero', '/dev/stdin', '/dev/stdout', '/dev/stderr', '/dev/tty',
+    '/dev/null',
+    '/dev/zero',
+    '/dev/stdin',
+    '/dev/stdout',
+    '/dev/stderr',
+    '/dev/tty',
 ])
 
 const SHELL_WRAPPERS = new Set(['bash', 'sh', 'zsh', 'dash', 'ksh'])
@@ -30,11 +53,7 @@ const DEFAULT_ALLOW_HOSTS = ['localhost', '127.0.0.1', '::1', '0.0.0.0']
 export class SandboxRuntime {
     #approver = null
 
-    constructor({
-        workspace,
-        autoApprove = false,
-        allowHosts = DEFAULT_ALLOW_HOSTS,
-    } = {}) {
+    constructor({ workspace, autoApprove = false, allowHosts = DEFAULT_ALLOW_HOSTS } = {}) {
         this.workspace = path.resolve(workspace ?? process.cwd())
         this.autoApprove = Boolean(autoApprove)
         this.allowHosts = new Set(allowHosts)
@@ -76,7 +95,9 @@ export class SandboxRuntime {
             return { approved: true, source: 'auto' }
         }
         if (!this.#approver) {
-            throw new Error(`write requires user approval, but no approval channel is set: ${summary}`)
+            throw new Error(
+                `write requires user approval, but no approval channel is set: ${summary}`,
+            )
         }
         const ok = await this.#approver(request)
         if (!ok) {
@@ -115,7 +136,9 @@ function inspectCommand(command, ctx, depth = 0) {
     }
 
     if (isRecursiveRm(tokenize(text))) {
-        return deny('recursive delete (rm -r / rm -rf) is blocked; only single-file deletes inside the workspace are allowed')
+        return deny(
+            'recursive delete (rm -r / rm -rf) is blocked; only single-file deletes inside the workspace are allowed',
+        )
     }
 
     const piped = inspectPipedDownload(text)
@@ -196,11 +219,22 @@ function inspectWrappers(tokens, ctx, depth) {
 }
 
 const CURL_VALUE_FLAGS = new Set([
-    '-o', '--output', '-O', '--remote-name', '--remote-name-all',
-    '-T', '--upload-file', '--url',
-    '-K', '--config', '--unix-socket',
-    '-x', '--proxy',
-    '-P', '--directory-prefix', '--output-document',
+    '-o',
+    '--output',
+    '-O',
+    '--remote-name',
+    '--remote-name-all',
+    '-T',
+    '--upload-file',
+    '--url',
+    '-K',
+    '--config',
+    '--unix-socket',
+    '-x',
+    '--proxy',
+    '-P',
+    '--directory-prefix',
+    '--output-document',
 ])
 
 function inspectNetwork(tokens, ctx) {
@@ -216,7 +250,11 @@ function inspectNetwork(tokens, ctx) {
                     const blocked = inspectNetArg(token.slice(eq + 1), ctx)
                     if (blocked) return blocked
                 }
-                if (CURL_VALUE_FLAGS.has(token) && tokens[j + 1] && !tokens[j + 1].startsWith('-')) {
+                if (
+                    CURL_VALUE_FLAGS.has(token) &&
+                    tokens[j + 1] &&
+                    !tokens[j + 1].startsWith('-')
+                ) {
                     const blocked = inspectNetArg(tokens[++j], ctx)
                     if (blocked) return blocked
                 }
@@ -281,7 +319,8 @@ function inspectPathTokens(tokens, workspace) {
             resolveInside(workspace, requested)
         } catch {
             const abs = path.resolve(workspace, requested)
-            if (isAllowedDevice(requested) || isAllowedDevice(abs) || isAllowedDevice(token)) continue
+            if (isAllowedDevice(requested) || isAllowedDevice(abs) || isAllowedDevice(token))
+                continue
             if (isSystemPath(abs) || isSystemPath(requested)) {
                 return deny(`system path is blocked: ${token}`)
             }
@@ -297,12 +336,11 @@ function inspectPathTokens(tokens, workspace) {
 function tokenize(command) {
     const out = []
     const re = /"(?:\\.|[^"])*"|'(?:\\.|[^'])*'|[;&|]+|[^\s;|&<>()]+/g
-    let match
-    while ((match = re.exec(command))) {
+    for (const match of command.matchAll(re)) {
         let token = match[0]
         if (
-            (token.startsWith('"') && token.endsWith('"') && token.length >= 2)
-            || (token.startsWith("'") && token.endsWith("'") && token.length >= 2)
+            (token.startsWith('"') && token.endsWith('"') && token.length >= 2) ||
+            (token.startsWith("'") && token.endsWith("'") && token.length >= 2)
         ) {
             token = token.slice(1, -1)
         }
@@ -318,13 +356,15 @@ function isSeparator(token) {
 function looksLikePath(token) {
     if (!token || token.startsWith('-')) return false
     if (/^[a-zA-Z_][a-zA-Z0-9_]*=/.test(token)) return false
-    return token.includes('/')
-        || token.includes('\\')
-        || token === '.'
-        || token === '..'
-        || token.startsWith('~')
-        || token.startsWith('.')
-        || /\$\{?[A-Za-z_]/.test(token)
+    return (
+        token.includes('/') ||
+        token.includes('\\') ||
+        token === '.' ||
+        token === '..' ||
+        token.startsWith('~') ||
+        token.startsWith('.') ||
+        /\$\{?[A-Za-z_]/.test(token)
+    )
 }
 
 function isAllowedDevice(value) {
@@ -335,12 +375,16 @@ function isAllowedDevice(value) {
 
 function isSystemBinary(value) {
     const normalized = path.resolve(value)
-    return SYSTEM_BIN_PREFIXES.some(prefix => normalized === prefix.slice(0, -1) || normalized.startsWith(prefix))
+    return SYSTEM_BIN_PREFIXES.some(
+        (prefix) => normalized === prefix.slice(0, -1) || normalized.startsWith(prefix),
+    )
 }
 
 function isSystemPath(value) {
     const normalized = path.resolve(value)
-    return SYSTEM_PATH_PREFIXES.some(prefix => normalized === prefix || normalized.startsWith(`${prefix}/`))
+    return SYSTEM_PATH_PREFIXES.some(
+        (prefix) => normalized === prefix || normalized.startsWith(`${prefix}/`),
+    )
 }
 
 function expandHome(token) {
@@ -384,8 +428,10 @@ function isBareHostname(arg) {
     if (!arg || arg.includes('/') || arg.includes('\\')) return false
     if (/^\d{1,3}(?:\.\d{1,3}){3}(?::\d+)?$/.test(arg)) return true
     if (/^\[?[0-9a-fA-F:]+\]?(?::\d+)?$/.test(arg) && arg.includes(':')) return true
-    return /^(?:localhost|[\w-]+(?:\.[\w-]+)+)(?::\d+)?$/i.test(arg)
-        && !/\.(?:md|js|ts|json|txt|css|html|png|jpg|sh|yml|yaml|lock|map|cjs|mjs)$/i.test(arg)
+    return (
+        /^(?:localhost|[\w-]+(?:\.[\w-]+)+)(?::\d+)?$/i.test(arg) &&
+        !/\.(?:md|js|ts|json|txt|css|html|png|jpg|sh|yml|yaml|lock|map|cjs|mjs)$/i.test(arg)
+    )
 }
 
 function stripPort(host) {

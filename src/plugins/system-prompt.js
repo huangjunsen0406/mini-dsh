@@ -10,10 +10,18 @@ class SystemPromptService extends Service {
         super(ctx, 'systemPrompt')
         this.runtime = new SystemPromptRuntime()
     }
-    section(value) { return this.runtime.section(value) }
-    context(value) { return this.runtime.context(value) }
-    assemble(value) { return this.runtime.assemble(value) }
-    inspect() { return this.runtime.inspect() }
+    section(value) {
+        return this.runtime.section(value)
+    }
+    context(value) {
+        return this.runtime.context(value)
+    }
+    assemble(value) {
+        return this.runtime.assemble(value)
+    }
+    inspect() {
+        return this.runtime.inspect()
+    }
 }
 
 export const name = 'mini-system-prompt'

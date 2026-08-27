@@ -39,14 +39,17 @@ export class AgentLoopRuntime {
             // LLM messages are a projection of the session log, not a separate store.
             const messages = this.sessions.deriveMessages(sessionId)
 
-            const response = await this.llm.chat({
-                system,
-                messages,
-                tools: this.tools.schemas(),
-                signal,
-                onReasoning,
-                onContent,
-            }, agent.model)
+            const response = await this.llm.chat(
+                {
+                    system,
+                    messages,
+                    tools: this.tools.schemas(),
+                    signal,
+                    onReasoning,
+                    onContent,
+                },
+                agent.model,
+            )
 
             const toolCalls = response.toolCalls ?? []
 
@@ -73,16 +76,12 @@ export class AgentLoopRuntime {
 
                 onToolCall?.(call)
 
-                const result = await this.tools.execute(
-                    call.name,
-                    call.arguments,
-                    {
-                        signal,
-                        sessionId,
-                        toolCallId: call.id,
-                        agent,
-                    },
-                )
+                const result = await this.tools.execute(call.name, call.arguments, {
+                    signal,
+                    sessionId,
+                    toolCallId: call.id,
+                    agent,
+                })
 
                 const renderedContent = this.tools.renderResult(result)
                 onToolResult?.({ ...result, renderedContent, name: call.name, toolCallId: call.id })

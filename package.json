@@ -1,26 +1,32 @@
 {
-  "name": "mini-dsh",
-  "version": "0.0.1",
-  "private": true,
-  "type": "module",
-  "description": "A minimal handwritten runtime following DSH concepts",
-  "engines": {
-    "node": ">=20.18.1"
-  },
-  "packageManager": "pnpm@11.22.0",
-  "scripts": {
-    "start": "node src/index.js",
-    "test": "node --test test/*.test.js",
-    "check": "node scripts/check-syntax.js"
-  },
-  "keywords": [
-    "dsh"
-  ],
-  "author": "junsen",
-  "license": "ISC",
-  "dependencies": {
-    "@deepseek-ai/cordis": "^4.0.1",
-    "@deepseek-ai/dsh-mcp-client": "0.1.1-rc.2",
-    "dotenv": "^17.4.2"
-  }
+    "name": "mini-dsh",
+    "version": "0.0.1",
+    "private": true,
+    "type": "module",
+    "description": "A minimal handwritten runtime following DSH concepts",
+    "engines": {
+        "node": ">=20.18.1"
+    },
+    "packageManager": "pnpm@11.22.0",
+    "scripts": {
+        "start": "node src/index.js",
+        "test": "node --test test/*.test.js",
+        "check": "node scripts/check-syntax.js",
+        "lint": "biome check .",
+        "lint:fix": "biome check --write .",
+        "format": "biome format --write ."
+    },
+    "keywords": [
+        "dsh"
+    ],
+    "author": "junsen",
+    "license": "ISC",
+    "dependencies": {
+        "@deepseek-ai/cordis": "^4.0.1",
+        "@deepseek-ai/dsh-mcp-client": "0.1.1-rc.2",
+        "dotenv": "^17.4.2"
+    },
+    "devDependencies": {
+        "@biomejs/biome": "^2.5.10"
+    }
 }

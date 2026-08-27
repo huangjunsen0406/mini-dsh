@@ -6,7 +6,7 @@ function toText(value) {
 function blocksToText(blocks) {
     if (!Array.isArray(blocks)) return toText(blocks)
     return blocks
-        .map(block => {
+        .map((block) => {
             if (block?.type === 'text') return block.text ?? ''
             return toText(block)
         })
@@ -26,8 +26,10 @@ export class ToolRuntime {
 
     register(definition) {
         if (!definition?.name) throw new Error('tool.name is required')
-        if (typeof definition.execute !== 'function') throw new Error(`tool is missing execute(): ${definition.name}`)
-        if (this.#tools.has(definition.name)) throw new Error(`duplicate tool name: ${definition.name}`)
+        if (typeof definition.execute !== 'function')
+            throw new Error(`tool is missing execute(): ${definition.name}`)
+        if (this.#tools.has(definition.name))
+            throw new Error(`duplicate tool name: ${definition.name}`)
 
         this.#tools.set(definition.name, definition)
         let disposed = false
@@ -50,7 +52,7 @@ export class ToolRuntime {
 
     // Format tools as OpenAI-compatible Chat Completions function schemas.
     schemas() {
-        return this.list().map(tool => ({
+        return this.list().map((tool) => ({
             type: 'function',
             function: {
                 name: tool.name,
@@ -80,7 +82,7 @@ export class ToolRuntime {
         try {
             const value = await tool.execute(args, execution)
             // Use custom render if defined; otherwise stringify the value.
-            let content = tool.output?.render
+            const content = tool.output?.render
                 ? tool.output.render(args, value)
                 : [{ type: 'text', text: toText(value) }]
 

@@ -38,16 +38,14 @@ export class SystemPromptRuntime {
 
     async assemble(assembleContext = {}) {
         // Sections and contexts share one order space so plugins can interleave them.
-        const entries = [
-            ...this.#sections.values(),
-            ...this.#contexts.values(),
-        ].sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
+        const entries = [...this.#sections.values(), ...this.#contexts.values()].sort(
+            (a, b) => (a.order ?? 0) - (b.order ?? 0),
+        )
 
         const parts = []
         for (const item of entries) {
-            const text = typeof item.text === 'function'
-                ? await item.text(assembleContext)
-                : item.text
+            const text =
+                typeof item.text === 'function' ? await item.text(assembleContext) : item.text
             if (text?.trim()) parts.push(text.trim())
         }
         return parts.join('\n\n')
